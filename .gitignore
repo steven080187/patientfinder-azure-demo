@@ -23,3 +23,6 @@ azure-api/uploads/
 
 # Build artifacts
 azure-api/dist/
+
+# Separate nested project (do not track inside this repo)
+patientfinder-mobile/
