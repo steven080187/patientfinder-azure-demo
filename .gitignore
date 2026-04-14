@@ -1,0 +1,25 @@
+# Core
+.DS_Store
+node_modules/
+dist/
+coverage/
+
+# Env and secrets
+.env
+.env.local
+.env.*.local
+azure-api/.env
+azure-api/.env.local
+azure-api/.env.*.local
+
+# Tooling and local outputs
+.vercel/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+azure-api/uploads/
+
+# Build artifacts
+azure-api/dist/

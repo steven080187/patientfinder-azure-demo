@@ -1,0 +1,32 @@
+[
+  {
+    "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+    "value": "true",
+    "slotSetting": false
+  },
+  {
+    "name": "WEBSITE_NODE_DEFAULT_VERSION",
+    "value": "~22",
+    "slotSetting": false
+  },
+  {
+    "name": "ARCHIVE_STORAGE_PROVIDER",
+    "value": "azure",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_STORAGE_CONNECTION_STRING",
+    "value": "replace-with-your-connection-string",
+    "slotSetting": true
+  },
+  {
+    "name": "AZURE_STORAGE_CONTAINER",
+    "value": "patientfinder-archive",
+    "slotSetting": false
+  },
+  {
+    "name": "INTAKE_API_KEY",
+    "value": "replace-with-a-new-random-shared-secret",
+    "slotSetting": true
+  }
+]

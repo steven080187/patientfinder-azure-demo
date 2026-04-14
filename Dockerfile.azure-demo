@@ -1,0 +1,40 @@
+FROM node:22-bookworm-slim AS frontend-build
+WORKDIR /app/patientfinder
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts eslint.config.js index.html server.js ./
+COPY public ./public
+COPY src ./src
+
+ENV VITE_BACKEND_PROVIDER=azure-api
+ENV VITE_AZURE_API_BASE_URL=
+
+RUN npm run build
+
+FROM node:22-bookworm-slim AS api-build
+WORKDIR /app/azure-api
+
+COPY azure-api/package.json azure-api/package-lock.json ./
+RUN npm ci
+
+COPY azure-api/tsconfig.json ./
+COPY azure-api/src ./src
+RUN npm run build
+
+FROM node:22-bookworm-slim AS runtime
+WORKDIR /app/azure-api
+
+COPY azure-api/package.json azure-api/package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY --from=api-build /app/azure-api/dist ./dist
+COPY --from=frontend-build /app/patientfinder/dist /app/frontend-dist
+
+ENV PORT=3001
+ENV FRONTEND_DIST_DIR=/app/frontend-dist
+
+EXPOSE 3001
+
+CMD ["npm", "start"]

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+    "value": "true",
+    "slotSetting": false
+  },
+  {
+    "name": "WEBSITE_NODE_DEFAULT_VERSION",
+    "value": "~22",
+    "slotSetting": false
+  }
+]

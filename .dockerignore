@@ -1,0 +1,10 @@
+node_modules
+azure-api/node_modules
+dist
+azure-api/dist
+.git
+.github
+ios
+exports
+coverage
+npm-debug.log*
