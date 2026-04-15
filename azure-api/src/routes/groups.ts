@@ -1,9 +1,12 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Router, type Request } from "express";
-import PDFDocument from "pdfkit";
+import PDFKitDocument from "pdfkit";
+import { PDFDocument as PdfLibDocument, StandardFonts, rgb } from "pdf-lib";
 import { z } from "zod";
 import { env } from "../config.js";
 import { query, withTransaction } from "../db.js";
@@ -12,7 +15,46 @@ import { getRequestUser, requireAnyRole, requireAuth } from "../entraAuth.js";
 export const groupsRouter = Router();
 
 const uploadRootDir = path.resolve(env.GROUP_PDF_UPLOAD_DIR);
+const fallbackUploadRootDir = path.resolve(os.tmpdir(), "patientfinder", "group-pdfs");
 const groupLinkLifetimeMs = 1000 * 60 * 60 * 8;
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const groupPdfTemplateCandidates = [
+  path.resolve(moduleDir, "../../assets/NewPDF.pdf"),
+  path.resolve(process.cwd(), "assets/NewPDF.pdf"),
+  path.resolve(process.cwd(), "azure-api/assets/NewPDF.pdf"),
+];
+
+function getGroupPdfRoots() {
+  return Array.from(new Set([uploadRootDir, fallbackUploadRootDir]));
+}
+
+function resolveStoredGroupPdf(pdfStoragePath: string) {
+  for (const root of getGroupPdfRoots()) {
+    const absolutePath = path.resolve(root, pdfStoragePath);
+    const relativePath = path.relative(root, absolutePath);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) continue;
+    if (existsSync(absolutePath)) return absolutePath;
+  }
+  return null;
+}
+
+async function writeGroupPdf(sessionId: string, fileName: string, pdfBuffer: Buffer) {
+  const relativePath = `${sessionId}/${fileName}`;
+  let lastError: unknown = null;
+
+  for (const root of getGroupPdfRoots()) {
+    try {
+      const absoluteDir = path.join(root, sessionId);
+      await mkdir(absoluteDir, { recursive: true });
+      await writeFile(path.join(absoluteDir, fileName), pdfBuffer);
+      return relativePath;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Unable to store group PDF.");
+}
 
 const startLiveSessionSchema = z.object({
   topic: z.string().trim().min(1).max(200),
@@ -98,6 +140,32 @@ function safePdfFileName(fileName: string) {
   return normalized.slice(0, 160);
 }
 
+type GroupPdfSession = {
+  id: string;
+  topic: string;
+  groupDate: string;
+  startTime: string;
+  endTime: string | null;
+  counselorName: string;
+  location: string | null;
+};
+
+type GroupPdfEntry = {
+  participantName: string;
+  matchedPatientName: string | null;
+  sageNumber: string | null;
+  signedAt: string;
+  signatureDataUrl: string | null;
+};
+
+type GroupPdfRenderParams = {
+  session: GroupPdfSession;
+  entries: GroupPdfEntry[];
+  counselorSignatureDataUrl: string;
+};
+
+type FieldRect = { x: number; y: number; width: number; height: number };
+
 function dataUrlToBuffer(dataUrl?: string | null) {
   if (!dataUrl || !dataUrl.startsWith("data:image/")) return null;
   const comma = dataUrl.indexOf(",");
@@ -110,26 +178,151 @@ function dataUrlToBuffer(dataUrl?: string | null) {
   }
 }
 
-async function renderGroupSessionPdf(params: {
-  session: {
-    id: string;
-    topic: string;
-    groupDate: string;
-    startTime: string;
-    endTime: string | null;
-    counselorName: string;
-    location: string | null;
-  };
-  entries: Array<{
-    participantName: string;
-    matchedPatientName: string | null;
-    signedAt: string;
-    signatureDataUrl: string | null;
-  }>;
-  counselorSignatureDataUrl: string;
-}) {
+async function findTemplateBytes() {
+  for (const candidate of groupPdfTemplateCandidates) {
+    if (!existsSync(candidate)) continue;
+    try {
+      return await readFile(candidate);
+    } catch {
+      // Keep trying other candidates.
+    }
+  }
+  return null;
+}
+
+function getFieldMapFromTemplate(templateDoc: PdfLibDocument) {
+  const map: Record<string, FieldRect> = {};
+  const form = templateDoc.getForm();
+  for (const field of form.getFields()) {
+    const widgets = (field as any)?.acroField?.getWidgets?.() ?? [];
+    const rect = widgets[0]?.getRectangle?.();
+    if (!rect) continue;
+    map[field.getName()] = {
+      x: Number(rect.x),
+      y: Number(rect.y),
+      width: Number(rect.width),
+      height: Number(rect.height),
+    };
+  }
+  return map;
+}
+
+function formatTemplateDate(value: string) {
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const yyyy = String(d.getFullYear());
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+function formatTemplateTime(value: string | null) {
+  if (!value) return "";
+  const [hoursRaw, minutesRaw] = value.split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value.replace(/\s+/g, "").toLowerCase();
+  const suffix = hours >= 12 ? "pm" : "am";
+  const hours12 = hours % 12 || 12;
+  return `${hours12}:${String(minutes).padStart(2, "0")}${suffix}`;
+}
+
+function drawTextField(
+  page: any,
+  font: any,
+  text: string,
+  rect: FieldRect | undefined,
+  options: { center?: boolean } = {}
+) {
+  if (!rect || !text) return;
+  const size = Math.min(15, Math.max(11, rect.height * 0.45));
+  const safeText = String(text);
+  const textWidth = font.widthOfTextAtSize(safeText, size);
+  const x = options.center
+    ? rect.x + Math.max(2, (rect.width - textWidth) / 2)
+    : rect.x + 4;
+  const y = rect.y + Math.max(2, (rect.height - size) / 2);
+  page.drawText(safeText, { x, y, size, font, color: rgb(0.08, 0.08, 0.08) });
+}
+
+async function drawSignatureField(
+  doc: PdfLibDocument,
+  page: any,
+  dataUrl: string | null | undefined,
+  rect: FieldRect | undefined
+) {
+  if (!rect) return;
+  const imageData = dataUrlToBuffer(dataUrl);
+  if (!imageData) return;
+
+  let image;
+  const header = dataUrl?.slice(0, dataUrl.indexOf(",")) ?? "";
+  if (header.includes("image/jpeg") || header.includes("image/jpg")) {
+    image = await doc.embedJpg(imageData);
+  } else {
+    image = await doc.embedPng(imageData);
+  }
+
+  const padX = 6;
+  const padY = 4;
+  const targetWidth = Math.max(1, rect.width - padX * 2);
+  const targetHeight = Math.max(1, rect.height - padY * 2);
+  const imgRatio = image.width / image.height;
+  const targetRatio = targetWidth / targetHeight;
+
+  const drawWidth = imgRatio > targetRatio ? targetWidth : targetHeight * imgRatio;
+  const drawHeight = imgRatio > targetRatio ? targetWidth / imgRatio : targetHeight;
+  const drawX = rect.x + (rect.width - drawWidth) / 2;
+  const drawY = rect.y + (rect.height - drawHeight) / 2;
+
+  page.drawImage(image, { x: drawX, y: drawY, width: drawWidth, height: drawHeight });
+}
+
+async function renderGroupSessionPdfWithTemplate(params: GroupPdfRenderParams) {
+  const templateBytes = await findTemplateBytes();
+  if (!templateBytes) return null;
+
+  const templateDoc = await PdfLibDocument.load(templateBytes);
+  const fieldMap = getFieldMapFromTemplate(templateDoc);
+  if (!Object.keys(fieldMap).length) return null;
+
+  const outDoc = await PdfLibDocument.create();
+  const font = await outDoc.embedFont(StandardFonts.Helvetica);
+  const chunks: GroupPdfEntry[][] = [];
+  for (let i = 0; i < Math.max(params.entries.length, 1); i += 12) {
+    chunks.push(params.entries.slice(i, i + 12));
+  }
+  if (!chunks.length) chunks.push([]);
+
+  for (const chunk of chunks) {
+    const [page] = await outDoc.copyPages(templateDoc, [0]);
+    outDoc.addPage(page);
+
+    drawTextField(page, font, params.session.location ?? "Zoom", fieldMap["Location"]);
+    drawTextField(page, font, formatTemplateDate(params.session.groupDate), fieldMap["Date"], { center: true });
+    drawTextField(page, font, formatTemplateTime(params.session.startTime), fieldMap["Start time"], { center: true });
+    drawTextField(page, font, formatTemplateTime(params.session.endTime), fieldMap["End time"], { center: true });
+    drawTextField(page, font, params.session.topic, fieldMap["Group Topic"]);
+    drawTextField(page, font, params.session.counselorName, fieldMap["Counselor"]);
+    await drawSignatureField(outDoc, page, params.counselorSignatureDataUrl, fieldMap["Signature"]);
+
+    for (let i = 0; i < 12; i += 1) {
+      const row = chunk[i];
+      if (!row) continue;
+      const displayName = row.matchedPatientName ?? row.participantName;
+      const suffix = String(i + 1);
+      drawTextField(page, font, displayName, fieldMap[`Patient Name${suffix}`]);
+      drawTextField(page, font, row.sageNumber ?? "", fieldMap[`SAGE Number${suffix}`], { center: true });
+      await drawSignatureField(outDoc, page, row.signatureDataUrl, fieldMap[`Signature${suffix}`]);
+    }
+  }
+
+  return Buffer.from(await outDoc.save());
+}
+
+async function renderGroupSessionPdfLegacy(params: GroupPdfRenderParams) {
   return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ size: "LETTER", margin: 36 });
+    const doc = new PDFKitDocument({ size: "LETTER", margin: 36 });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk) => chunks.push(chunk as Buffer));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -182,6 +375,16 @@ async function renderGroupSessionPdf(params: {
     doc.fontSize(10).text(`Signed by ${params.session.counselorName} at ${new Date().toISOString()}`);
     doc.end();
   });
+}
+
+async function renderGroupSessionPdf(params: GroupPdfRenderParams) {
+  try {
+    const templated = await renderGroupSessionPdfWithTemplate(params);
+    if (templated) return templated;
+  } catch (error) {
+    console.error("Group template PDF render failed, falling back to legacy layout:", error);
+  }
+  return renderGroupSessionPdfLegacy(params);
 }
 
 function getPublicGroupOrigin(req: Request) {
@@ -328,8 +531,12 @@ groupsRouter.delete("/api/groups", requireAuth, requireAnyRole("Admin", "Counsel
       }
     });
 
-    await rm(uploadRootDir, { recursive: true, force: true });
-    await mkdir(uploadRootDir, { recursive: true });
+    await Promise.all(
+      getGroupPdfRoots().map(async (root) => {
+        await rm(root, { recursive: true, force: true });
+        await mkdir(root, { recursive: true });
+      })
+    );
 
     res.json({ ok: true });
   } catch (error) {
@@ -353,9 +560,8 @@ groupsRouter.get("/api/groups/:id/pdf", requireAuth, requireAnyRole("Admin", "Co
       return;
     }
 
-    const absolutePath = path.resolve(uploadRootDir, record.pdf_storage_path);
-    const relativePath = path.relative(uploadRootDir, absolutePath);
-    if (relativePath.startsWith("..") || path.isAbsolute(relativePath) || !existsSync(absolutePath)) {
+    const absolutePath = resolveStoredGroupPdf(record.pdf_storage_path);
+    if (!absolutePath) {
       res.status(404).json({ ok: false, error: "Group PDF file is unavailable." });
       return;
     }
@@ -615,12 +821,14 @@ groupsRouter.post("/api/groups/live/:id/finalize", requireAuth, requireAnyRole("
     const entries = await query<{
       participant_name: string;
       patient_name: string | null;
+      sage_number: string | null;
       signed_at: string;
       signature_payload: string | null;
     }>(
       `select
           entries.participant_name,
           patients.full_name as patient_name,
+          entries.sage_number,
           entries.signed_at,
           entries.signature_payload
        from public.group_signin_entries entries
@@ -654,6 +862,7 @@ groupsRouter.post("/api/groups/live/:id/finalize", requireAuth, requireAnyRole("
         return {
           participantName: entry.participant_name,
           matchedPatientName: entry.patient_name,
+          sageNumber: entry.sage_number,
           signedAt: new Date(entry.signed_at).toLocaleString(),
           signatureDataUrl,
         };
@@ -662,10 +871,7 @@ groupsRouter.post("/api/groups/live/:id/finalize", requireAuth, requireAnyRole("
     });
 
     const fileName = safePdfFileName(`group-session-${session.id}.pdf`);
-    const relativePath = `${session.id}/${fileName}`;
-    const absoluteDir = path.join(uploadRootDir, session.id);
-    await mkdir(absoluteDir, { recursive: true });
-    await writeFile(path.join(absoluteDir, fileName), pdfBuffer);
+    const relativePath = await writeGroupPdf(session.id, fileName, pdfBuffer);
 
     await query(
       `update public.group_signin_sessions

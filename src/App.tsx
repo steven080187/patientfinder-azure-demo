@@ -461,6 +461,14 @@ function formatDurationValue(minutes: number) {
   return `${rounded} minute${rounded === 1 ? "" : "s"}`;
 }
 
+function getRequestErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof Error) || !error.message) return fallback;
+  const detail = error.message
+    .replace(/^Azure API request failed:\s*\d+\s*-\s*/i, "")
+    .trim();
+  return detail || fallback;
+}
+
 function monthKey(iso: string) {
   return toDateOnly(iso)?.slice(0, 7) ?? todayIso().slice(0, 7);
 }
@@ -1205,6 +1213,7 @@ export default function App() {
   const [liveGroupState, setLiveGroupState] = useState<LiveGroupSessionState | null>(null);
   const [liveGroupBusy, setLiveGroupBusy] = useState(false);
   const [liveGroupError, setLiveGroupError] = useState<string | null>(null);
+  const [liveGroupSuccess, setLiveGroupSuccess] = useState<string | null>(null);
   const [isMobileWorkspace, setIsMobileWorkspace] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth <= 720 : false
   );
@@ -1454,6 +1463,7 @@ export default function App() {
       setGroupSessions([]);
       setLiveGroupState(null);
       setLiveGroupError(null);
+      setLiveGroupSuccess(null);
       setLiveGroupBusy(false);
       return;
     }
@@ -1611,15 +1621,17 @@ export default function App() {
         };
       });
       setLiveGroupError(null);
+      setLiveGroupSuccess(null);
     } catch (error) {
       console.error("Unable to refresh live group session:", error);
-      setLiveGroupError("Could not refresh live sign-ins right now.");
+      setLiveGroupError(getRequestErrorMessage(error, "Could not refresh live sign-ins right now."));
     }
   });
 
   const startLiveGroupSession = async (payload: { topic: string; timeSlot: LiveGroupTimeSlot }) => {
     setLiveGroupBusy(true);
     setLiveGroupError(null);
+    setLiveGroupSuccess(null);
     try {
       const started = await dataClient.startLiveGroupSession(payload);
       setLiveGroupState({
@@ -1630,9 +1642,10 @@ export default function App() {
       });
       await refreshLiveGroupSession(started.session.id);
       void loadDashboardData();
+      setLiveGroupSuccess("Live session started. Share the link and collect signatures before finalizing.");
     } catch (error) {
       console.error("Unable to start live group session:", error);
-      setLiveGroupError("Could not start the group session. Please try again.");
+      setLiveGroupError(getRequestErrorMessage(error, "Could not start the group session. Please try again."));
     } finally {
       setLiveGroupBusy(false);
     }
@@ -1646,13 +1659,15 @@ export default function App() {
 
     setLiveGroupBusy(true);
     setLiveGroupError(null);
+    setLiveGroupSuccess(null);
     try {
       await dataClient.clearGroupSessions();
       setLiveGroupState(null);
       await loadDashboardData();
+      setLiveGroupSuccess("Group session history and PDFs were reset.");
     } catch (error) {
       console.error("Unable to clear group history:", error);
-      setLiveGroupError("Could not clear group history right now.");
+      setLiveGroupError(getRequestErrorMessage(error, "Could not clear group history right now."));
     } finally {
       setLiveGroupBusy(false);
     }
@@ -1662,13 +1677,14 @@ export default function App() {
     if (!liveGroupState) return;
     setLiveGroupBusy(true);
     setLiveGroupError(null);
+    setLiveGroupSuccess(null);
     try {
       await dataClient.setLiveGroupEntryMatch(liveGroupState.session.id, entryId, patientId);
       await refreshLiveGroupSession(liveGroupState.session.id);
       void loadDashboardData();
     } catch (error) {
       console.error("Unable to match group sign-in:", error);
-      setLiveGroupError("Could not update that match.");
+      setLiveGroupError(getRequestErrorMessage(error, "Could not update that match."));
     } finally {
       setLiveGroupBusy(false);
     }
@@ -1678,13 +1694,14 @@ export default function App() {
     if (!liveGroupState) return;
     setLiveGroupBusy(true);
     setLiveGroupError(null);
+    setLiveGroupSuccess(null);
     try {
       await dataClient.removeLiveGroupEntry(liveGroupState.session.id, entryId);
       await refreshLiveGroupSession(liveGroupState.session.id);
       void loadDashboardData();
     } catch (error) {
       console.error("Unable to remove group sign-in:", error);
-      setLiveGroupError("Could not remove that sign-in.");
+      setLiveGroupError(getRequestErrorMessage(error, "Could not remove that sign-in."));
     } finally {
       setLiveGroupBusy(false);
     }
@@ -1692,15 +1709,20 @@ export default function App() {
 
   const finalizeLiveGroupSession = async (payload: { counselorSignName: string; counselorSignatureDataUrl: string }) => {
     if (!liveGroupState) return;
+    const finalizedSessionId = liveGroupState.session.id;
+    const finalizedTopic = liveGroupState.session.topic;
     setLiveGroupBusy(true);
     setLiveGroupError(null);
+    setLiveGroupSuccess(null);
     try {
-      await dataClient.finalizeLiveGroupSession(liveGroupState.session.id, payload);
+      await dataClient.finalizeLiveGroupSession(finalizedSessionId, payload);
       setLiveGroupState(null);
-      void loadDashboardData();
+      await loadDashboardData();
+      setLiveGroupSuccess(`Finalized "${finalizedTopic}" and generated the group PDF.`);
+      await openGroupPdf(finalizedSessionId);
     } catch (error) {
       console.error("Unable to finalize group session:", error);
-      setLiveGroupError("Could not finalize this group session.");
+      setLiveGroupError(getRequestErrorMessage(error, "Could not finalize this group session."));
     } finally {
       setLiveGroupBusy(false);
     }
@@ -2663,6 +2685,7 @@ export default function App() {
           activeSession={liveGroupState}
           busy={liveGroupBusy}
           err={liveGroupError}
+          successMessage={liveGroupSuccess}
           onStartSession={startLiveGroupSession}
           onSetMatch={setLiveGroupMatch}
           onRemoveEntry={removeLiveGroupEntry}
@@ -5509,6 +5532,7 @@ function GroupsPage({
   activeSession,
   busy,
   err,
+  successMessage,
   onStartSession,
   onSetMatch,
   onRemoveEntry,
@@ -5525,6 +5549,7 @@ function GroupsPage({
   activeSession: LiveGroupSessionState | null;
   busy: boolean;
   err: string | null;
+  successMessage: string | null;
   onStartSession: (payload: { topic: string; timeSlot: LiveGroupTimeSlot }) => Promise<void>;
   onSetMatch: (entryId: string, patientId: string | null) => Promise<void>;
   onRemoveEntry: (entryId: string) => Promise<void>;
@@ -5587,6 +5612,18 @@ function GroupsPage({
 
   return (
     <div className="workspaceRosterCard groupsPageCard">
+      {activeSession ? (
+        <div className="groupsWorkflowBanner">
+          <div className="groupsWorkflowKicker">Live workflow mode</div>
+          <div className="groupsWorkflowTitle">Zoom Group Session In Progress</div>
+          <div className="groupsWorkflowSteps">
+            <span>1. Share link</span>
+            <span>2. Match sign-ins</span>
+            <span>3. Finalize PDF</span>
+          </div>
+        </div>
+      ) : null}
+
       <div className="workspaceRosterHead">
         <div>
           <div className="workspaceSectionLabel">Groups</div>
@@ -5595,7 +5632,7 @@ function GroupsPage({
         <div className="workspaceResultsCount">{sortedGroups.length} session{sortedGroups.length === 1 ? "" : "s"}</div>
       </div>
 
-      <div className="groupsLiveCard">
+      <div className={`groupsLiveCard ${activeSession ? "groupsLiveCardActive" : ""}`}>
         <div className="groupsLiveHead">
           <div className="workspaceSectionLabel">Zoom Group Sign-In</div>
           {activeSession ? <span className="attendanceStatusChip neutral">In progress</span> : null}
@@ -5690,12 +5727,16 @@ function GroupsPage({
                 Finalize PDF
               </button>
               <button className="btn ghost" onClick={onDismissLiveSession} disabled={busy}>
-                Close session panel
+                Hide panel
               </button>
+            </div>
+            <div className="groupsFinalizeHint">
+              Finalize creates the completed group sign-in PDF and marks this session as closed.
             </div>
           </>
         )}
         {err ? <div className="authErr">{err}</div> : null}
+        {successMessage ? <div className="groupsSuccessNote">{successMessage}</div> : null}
       </div>
 
       {!sortedGroups.length ? <div className="empty">No group sessions yet.</div> : null}

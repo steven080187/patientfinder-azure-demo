@@ -1,4 +1,6 @@
 import dotenv from "dotenv";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 
 dotenv.config({ path: ".env.local" });
@@ -10,7 +12,7 @@ const envSchema = z.object({
   AZURE_API_ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),
   PUBLIC_GROUP_SIGN_ORIGIN: z.string().optional(),
   FRONTEND_DIST_DIR: z.string().optional(),
-  GROUP_PDF_UPLOAD_DIR: z.string().default("./uploads/group-pdfs"),
+  GROUP_PDF_UPLOAD_DIR: z.string().default(path.join(os.tmpdir(), "patientfinder", "group-pdfs")),
   ENTRA_TENANT_ID: z.string().optional(),
   ENTRA_API_CLIENT_ID: z.string().optional(),
   ENTRA_API_AUDIENCES: z.string().optional(),
