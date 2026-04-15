@@ -22,13 +22,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_PATIENTFINDER_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_PATIENTFINDER_WEBAPP_PUBLISH_PROFILE }}
           package: .
