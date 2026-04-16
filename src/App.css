@@ -1274,6 +1274,17 @@
   color: inherit;
 }
 
+.workspaceAgendaNoteItem {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border-med));
+  background: color-mix(in srgb, var(--bg-section) 92%, var(--accent) 8%);
+}
+
+.workspaceAgendaNoteActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .workspaceAgendaTop {
   display: flex;
   justify-content: space-between;

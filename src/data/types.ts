@@ -92,6 +92,8 @@ export interface DataClient {
   createIntakeSubmission(payload: unknown): Promise<unknown>;
   updateIntakeSubmission(submissionId: string, payload: unknown): Promise<unknown>;
   createNotification(payload: unknown): Promise<void>;
+  markNotificationRead(notificationId: string): Promise<void>;
+  replyToNotification(notificationId: string, payload: unknown): Promise<void>;
   bulkUpsertPatients(payload: unknown): Promise<void>;
   getGroupSessions(): Promise<GroupSessionSummary[]>;
   clearGroupSessions(): Promise<void>;

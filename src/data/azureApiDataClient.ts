@@ -212,6 +212,12 @@ export const azureApiDataClient: DataClient = {
   async createNotification(payload) {
     await sendJson("/api/notifications", payload);
   },
+  async markNotificationRead(notificationId) {
+    await patchJson(`/api/notifications/${notificationId}/read`, {});
+  },
+  async replyToNotification(notificationId, payload) {
+    await sendJson(`/api/notifications/${notificationId}/reply`, payload);
+  },
   async bulkUpsertPatients(payload) {
     await sendJson("/api/patients/bulk-upsert", payload);
   },

@@ -254,6 +254,17 @@ function formatClock(value?: string | null) {
   return parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+function formatNotificationTimestamp(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function getPublicGroupTokenFromPath() {
   if (typeof window === "undefined") return null;
   const match = window.location.pathname.match(/^\/group-sign\/([^/]+)$/);
@@ -1201,6 +1212,7 @@ export default function App() {
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [teammateEmails, setTeammateEmails] = useState<string[]>([]);
   const [showNotificationComposer, setShowNotificationComposer] = useState(false);
+  const [replyTarget, setReplyTarget] = useState<{ notificationId: string; patientName: string; title: string } | null>(null);
   const [privacyLocked, setPrivacyLocked] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileGlanceOpen, setMobileGlanceOpen] = useState(false);
@@ -1268,6 +1280,9 @@ export default function App() {
       : null)
     : (azureDemoSession?.user ?? null);
   const activeAccessToken = isEntraMode ? azureAuth.accessToken : (azureDemoSession?.accessToken ?? null);
+  const hasCounselorRole = activeAuthUser?.roles.includes("Counselor") ?? false;
+  const hasAdminRole = activeAuthUser?.roles.includes("Admin") ?? false;
+  const hasIntakeRole = activeAuthUser?.roles.includes("Intake") ?? false;
 
   useEffect(() => {
     setAzureApiAccessTokenProvider(async () => activeAccessToken);
@@ -1284,12 +1299,9 @@ export default function App() {
   }, [activeAccessToken, azureDemoSession]);
 
   useEffect(() => {
-    const hasCounselorRole = activeAuthUser?.roles.includes("Counselor") ?? false;
-    const hasAdminRole = activeAuthUser?.roles.includes("Admin") ?? false;
-    const hasIntakeRole = activeAuthUser?.roles.includes("Intake") ?? false;
     setForceRoster(hasAdminRole || hasIntakeRole);
     setCaseLoadOnly(hasCounselorRole && !hasAdminRole && !hasIntakeRole);
-  }, [activeAuthUser]);
+  }, [hasAdminRole, hasCounselorRole, hasIntakeRole]);
 
 
   useEffect(() => {
@@ -1559,6 +1571,25 @@ export default function App() {
     [forceRoster, patients, caseLoadPatients]
   );
 
+  useEffect(() => {
+    // Deploy/data safety: if a counselor lands on an empty case-load, auto-fallback to full roster.
+    if (loadingPatients) return;
+    if (!hasCounselorRole || hasAdminRole || hasIntakeRole) return;
+    if (!caseLoadOnly || forceRoster) return;
+    if (!patients.length || caseLoadPatients.length) return;
+    setForceRoster(true);
+    setCaseLoadOnly(false);
+  }, [
+    loadingPatients,
+    hasCounselorRole,
+    hasAdminRole,
+    hasIntakeRole,
+    caseLoadOnly,
+    forceRoster,
+    patients.length,
+    caseLoadPatients.length,
+  ]);
+
   const dashboardMetrics = useMemo(() => {
     const dueReview = dashboardScopePatients.filter((patient) => {
       const due = getProblemListDueDates(complianceByPatient[patient.id]);
@@ -1597,7 +1628,40 @@ export default function App() {
       .slice(0, 8);
   }, [results, patients, caseAssignments, counselorId, complianceByPatient, sessions, currentWeek]);
 
-  const unreadNotifications = notifications.filter((note) => !note.readAt);
+  const counselorSpotlightNotes = useMemo(() => {
+    if (hasAdminRole || !hasCounselorRole) return [];
+
+    return notifications
+      .filter((note) => note.patientId && !note.readAt)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 4)
+      .map((note) => {
+        const patient = patients.find((entry) => entry.id === note.patientId);
+        if (!patient) return null;
+        return { note, patient };
+      })
+      .filter((entry): entry is { note: InAppNotification; patient: Patient } => Boolean(entry));
+  }, [notifications, patients, hasAdminRole, hasCounselorRole]);
+  const adminInboxNotes = useMemo(() => {
+    if (!hasAdminRole) return [];
+    const email = activeUserEmail.toLowerCase();
+
+    return notifications
+      .filter(
+        (note) =>
+          !note.readAt &&
+          ((note.recipientEmail && note.recipientEmail.toLowerCase() === email) || (note.recipientUserId && note.recipientUserId === activeUserId))
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 6)
+      .map((note) => {
+        const patient = note.patientId ? patients.find((entry) => entry.id === note.patientId) : null;
+        if (!patient) return null;
+        return { note, patient };
+      })
+      .filter((entry): entry is { note: InAppNotification; patient: Patient } => Boolean(entry));
+  }, [notifications, patients, hasAdminRole, activeUserEmail, activeUserId]);
+  const highlightedNotes = hasAdminRole ? adminInboxNotes : counselorSpotlightNotes;
 
   const applyDashboardFilter = (filter: DashboardFilterKey) => {
     setDashboardFilter((current) => current === filter ? null : filter);
@@ -1835,20 +1899,31 @@ export default function App() {
     title: string;
     message: string;
     priority: "normal" | "urgent";
-    patientId?: string;
+    patientId: string;
   }) => {
     const insertPayload = {
       recipient_email: payload.recipientEmail.toLowerCase(),
       title: payload.title,
       message: payload.message,
       priority: payload.priority,
-      patient_id: payload.patientId ?? null,
+      patient_id: payload.patientId,
       recipient_user_id: null,
       sender_email: activeUserEmail || null,
     };
 
     await dataClient.createNotification(insertPayload);
     return true;
+  };
+
+  const dismissNotification = async (notificationId: string) => {
+    await dataClient.markNotificationRead(notificationId);
+    const now = new Date().toISOString();
+    setNotifications((prev) => prev.map((note) => (note.id === notificationId ? { ...note, readAt: note.readAt ?? now } : note)));
+  };
+
+  const replyToNotification = async (notificationId: string, message: string) => {
+    await dataClient.replyToNotification(notificationId, { message });
+    await dismissNotification(notificationId);
   };
 
   const exportRosterSpreadsheet = () => {
@@ -2159,9 +2234,11 @@ export default function App() {
                       {jsonImporting ? "Importing JSON..." : "Import patient JSON"}
                       <input type="file" accept=".json" hidden onChange={handleJsonUpload} disabled={jsonImporting} />
                     </label>
-                    <button className="workspaceActionBtn" onClick={() => setShowNotificationComposer(true)}>
-                      Notifications{unreadNotifications.length ? ` (${unreadNotifications.length})` : ""}
-                    </button>
+                    {hasAdminRole ? (
+                      <button className="workspaceActionBtn" onClick={() => setShowNotificationComposer(true)}>
+                        Send counselor note
+                      </button>
+                    ) : null}
                     <button className="workspaceActionBtn" onClick={logout}>
                       Logout
                     </button>
@@ -2336,15 +2413,17 @@ export default function App() {
                       >
                         Groups
                       </button>
-                      <button
-                        className="workspaceActionBtn"
-                        onClick={() => {
-                          setShowNotificationComposer(true);
-                          setMobileMenuOpen(false);
-                        }}
-                      >
-                        Notifications{unreadNotifications.length ? ` (${unreadNotifications.length})` : ""}
-                      </button>
+                      {hasAdminRole ? (
+                        <button
+                          className="workspaceActionBtn"
+                          onClick={() => {
+                            setShowNotificationComposer(true);
+                            setMobileMenuOpen(false);
+                          }}
+                        >
+                          Send counselor note
+                        </button>
+                      ) : null}
                       <button className="workspaceActionBtn" onClick={logout}>
                         Logout
                       </button>
@@ -2576,10 +2655,53 @@ export default function App() {
                         <div className="workspaceAgendaTitle">What needs attention first</div>
                       </div>
                       <div className="workspaceResultsCount">
-                        {agendaRows.length} item{agendaRows.length === 1 ? "" : "s"}
+                        {agendaRows.length + highlightedNotes.length} item{agendaRows.length + highlightedNotes.length === 1 ? "" : "s"}
                       </div>
                     </div>
                     <div className="workspaceAgendaList">
+                      {highlightedNotes.map(({ note, patient }) => (
+                        <button
+                          key={note.id}
+                          className="workspaceAgendaItem workspaceAgendaNoteItem"
+                          onClick={() => openPatient(patient.id)}
+                        >
+                          <div className="workspaceAgendaTop">
+                            <strong>{patient.displayName}</strong>
+                            <div className="workspaceAgendaNoteActions">
+                              <span className={`workspaceTone ${note.priority === "urgent" ? "behind" : "neutral"}`}>
+                                {hasAdminRole ? "Counselor reply" : "Admin note"}
+                              </span>
+                              {!hasAdminRole ? (
+                                <button
+                                  className="workspaceMiniBtn"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setReplyTarget({
+                                      notificationId: note.id,
+                                      patientName: patient.displayName,
+                                      title: note.title,
+                                    });
+                                  }}
+                                >
+                                  Reply
+                                </button>
+                              ) : null}
+                              <button
+                                className="workspaceMiniBtn"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void dismissNotification(note.id);
+                                }}
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                          <div className="workspaceAgendaMeta">{note.title}</div>
+                          <div className="workspaceAgendaDetail">{note.message}</div>
+                          <div className="workspaceAgendaMeta">Sent {formatNotificationTimestamp(note.createdAt)}{note.senderEmail ? ` • ${note.senderEmail}` : ""}</div>
+                        </button>
+                      ))}
                       {agendaRows.map(({ patient, item }) => (
                         <button key={item.id} className="workspaceAgendaItem" onClick={() => openPatient(patient.id)}>
                           <div className="workspaceAgendaTop">
@@ -2590,7 +2712,7 @@ export default function App() {
                           <div className="workspaceAgendaDetail">{item.detail}</div>
                         </button>
                       ))}
-                      {!agendaRows.length ? (
+                      {!agendaRows.length && !highlightedNotes.length ? (
                         <div className="workspaceAgendaEmpty">
                           {loadingPatients ? "Loading roster data..." : "No urgent items right now. Open the roster tab to review patients or search the full list."}
                         </div>
@@ -2615,7 +2737,7 @@ export default function App() {
             }}
           />
         )}
-        {showNotificationComposer && (
+        {showNotificationComposer && hasAdminRole && (
           <NotificationComposerModal
             recipients={teammateEmails}
             patients={patients}
@@ -2627,6 +2749,17 @@ export default function App() {
             }}
           />
         )}
+        {replyTarget ? (
+          <NotificationReplyModal
+            patientName={replyTarget.patientName}
+            title={replyTarget.title}
+            onClose={() => setReplyTarget(null)}
+            onSend={async (message) => {
+              await replyToNotification(replyTarget.notificationId, message);
+              setReplyTarget(null);
+            }}
+          />
+        ) : null}
         <ThemePicker theme={theme} setTheme={applyTheme} />
       </div>
     );
@@ -3282,7 +3415,7 @@ function NotificationComposerModal({
     title: string;
     message: string;
     priority: "normal" | "urgent";
-    patientId?: string;
+    patientId: string;
   }) => Promise<void>;
 }) {
   const [recipientEmail, setRecipientEmail] = useState(recipients.find((email) => email !== currentUserEmail) ?? "");
@@ -3296,7 +3429,7 @@ function NotificationComposerModal({
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHead">
-          <div className="modalTitle">Send in-app notification</div>
+          <div className="modalTitle">Send counselor note</div>
           <button className="modalClose" onClick={onClose}>✕</button>
         </div>
         <div className="modalBody">
@@ -3322,7 +3455,7 @@ function NotificationComposerModal({
             <label className="addField">
               <span className="addLabel">Patient</span>
               <select className="select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
-                <option value="">No patient linked</option>
+                <option value="">Choose patient</option>
                 {patients.map((patient) => (
                   <option key={patient.id} value={patient.id}>{patient.displayName}</option>
                 ))}
@@ -3337,14 +3470,14 @@ function NotificationComposerModal({
 
           <label className="addField" style={{ marginTop: 12 }}>
             <span className="addLabel">Message</span>
-            <textarea className="authInput controlCenterTextarea" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Type the message for your teammate" />
+            <textarea className="authInput controlCenterTextarea" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="What should the counselor focus on for this patient?" />
           </label>
         </div>
         <div className="modalFoot">
           <button className="btn ghost" onClick={onClose} disabled={sending}>Cancel</button>
           <button
             className="btn"
-            disabled={sending || !recipientEmail || !title.trim() || !message.trim()}
+            disabled={sending || !recipientEmail || !patientId || !title.trim() || !message.trim()}
             onClick={async () => {
               setSending(true);
               await onSend({
@@ -3352,12 +3485,67 @@ function NotificationComposerModal({
                 title: title.trim(),
                 message: message.trim(),
                 priority,
-                patientId: patientId || undefined,
+                patientId,
               });
               setSending(false);
             }}
           >
             {sending ? "Sending..." : "Send"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotificationReplyModal({
+  patientName,
+  title,
+  onClose,
+  onSend,
+}: {
+  patientName: string;
+  title: string;
+  onClose: () => void;
+  onSend: (message: string) => Promise<void>;
+}) {
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHead">
+          <div className="modalTitle">Reply to admin note</div>
+          <button className="modalClose" onClick={onClose}>✕</button>
+        </div>
+        <div className="modalBody">
+          <div className="workspaceAgendaMeta">Patient</div>
+          <div className="workspaceAgendaDetail">{patientName}</div>
+          <div className="workspaceAgendaMeta">Original note</div>
+          <div className="workspaceAgendaDetail">{title}</div>
+          <label className="addField" style={{ marginTop: 12 }}>
+            <span className="addLabel">Reply</span>
+            <textarea
+              className="authInput controlCenterTextarea"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Write your response back to admin"
+            />
+          </label>
+        </div>
+        <div className="modalFoot">
+          <button className="btn ghost" onClick={onClose} disabled={sending}>Cancel</button>
+          <button
+            className="btn"
+            disabled={sending || !message.trim()}
+            onClick={async () => {
+              setSending(true);
+              await onSend(message.trim());
+              setSending(false);
+            }}
+          >
+            {sending ? "Sending..." : "Send reply"}
           </button>
         </div>
       </div>
