@@ -2025,6 +2025,17 @@
   opacity:0.92;
 }
 
+.btn.btnHighlight {
+  background: linear-gradient(180deg, #ffe58a, #ffd24f);
+  border-color: #d4a409;
+  color: #2f2200;
+  box-shadow: 0 8px 22px rgba(255, 210, 79, 0.24);
+}
+
+.btn.btnHighlight:hover {
+  filter: brightness(1.02);
+}
+
 .count{ margin-left:auto; opacity:0.75; font-size:13px; }
 .hintTiny{ margin-top:10px; font-size:12px; opacity:0.7; }
 

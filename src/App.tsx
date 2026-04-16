@@ -1208,11 +1208,13 @@ export default function App() {
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [caseAssignments, setCaseAssignments] = useState<Record<string, string>>({});
+  const [caseAssignmentEmails, setCaseAssignmentEmails] = useState<Record<string, string>>({});
   const [complianceByPatient, setComplianceByPatient] = useState<Record<string, PatientCompliance>>({});
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [teammateEmails, setTeammateEmails] = useState<string[]>([]);
   const [showNotificationComposer, setShowNotificationComposer] = useState(false);
   const [replyTarget, setReplyTarget] = useState<{ notificationId: string; patientName: string; title: string } | null>(null);
+  const [highlightTarget, setHighlightTarget] = useState<{ patientId: string; patientName: string } | null>(null);
   const [privacyLocked, setPrivacyLocked] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileGlanceOpen, setMobileGlanceOpen] = useState(false);
@@ -1389,10 +1391,15 @@ export default function App() {
     }
 
     const nextAssignments: Record<string, string> = {};
+    const nextAssignmentEmails: Record<string, string> = {};
     const nextTeammateEmails = new Set<string>();
     assignmentsRows.forEach((row: any) => {
       nextAssignments[row.patient_id] = String(row.counselor_user_id ?? row.counselor_email ?? "").toLowerCase();
-      if (row.counselor_email) nextTeammateEmails.add(String(row.counselor_email).toLowerCase());
+      if (row.counselor_email) {
+        const counselorEmail = String(row.counselor_email).toLowerCase();
+        nextAssignmentEmails[row.patient_id] = counselorEmail;
+        nextTeammateEmails.add(counselorEmail);
+      }
     });
     if (activeUserEmail) nextTeammateEmails.add(activeUserEmail.toLowerCase());
 
@@ -1439,6 +1446,7 @@ export default function App() {
     });
 
     setCaseAssignments(nextAssignments);
+    setCaseAssignmentEmails(nextAssignmentEmails);
     setTeammateEmails([...nextTeammateEmails].sort());
     setComplianceByPatient(nextCompliance);
     setPatients(patientsRows.map((row) => mergePatientWithExtras(row, nextExtras[row.id], nextRosterDetails[row.id])));
@@ -1489,6 +1497,7 @@ export default function App() {
     if (!activeAuthUser) {
       setPatients([]);
       setCaseAssignments({});
+      setCaseAssignmentEmails({});
       setComplianceByPatient({});
       setBillingEntries([]);
       setGroupSessions([]);
@@ -1630,9 +1639,15 @@ export default function App() {
 
   const counselorSpotlightNotes = useMemo(() => {
     if (hasAdminRole || !hasCounselorRole) return [];
+    const email = activeUserEmail.toLowerCase();
 
     return notifications
-      .filter((note) => note.patientId && !note.readAt)
+      .filter(
+        (note) =>
+          note.patientId &&
+          !note.readAt &&
+          ((note.recipientEmail && note.recipientEmail.toLowerCase() === email) || (note.recipientUserId && note.recipientUserId === activeUserId))
+      )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 4)
       .map((note) => {
@@ -1641,7 +1656,7 @@ export default function App() {
         return { note, patient };
       })
       .filter((entry): entry is { note: InAppNotification; patient: Patient } => Boolean(entry));
-  }, [notifications, patients, hasAdminRole, hasCounselorRole]);
+  }, [notifications, patients, hasAdminRole, hasCounselorRole, activeUserEmail, activeUserId]);
   const adminInboxNotes = useMemo(() => {
     if (!hasAdminRole) return [];
     const email = activeUserEmail.toLowerCase();
@@ -1836,6 +1851,11 @@ export default function App() {
         delete next[patientId];
         return next;
       });
+      setCaseAssignmentEmails((prev) => {
+        const next = { ...prev };
+        delete next[patientId];
+        return next;
+      });
       return;
     }
 
@@ -1844,6 +1864,9 @@ export default function App() {
       counselor_email: activeUserEmail || null,
     });
     setCaseAssignments((prev) => ({ ...prev, [patientId]: counselorId }));
+    if (activeUserEmail) {
+      setCaseAssignmentEmails((prev) => ({ ...prev, [patientId]: activeUserEmail.toLowerCase() }));
+    }
   };
 
   const updateCompliance = async (patientId: string, patch: Partial<PatientCompliance>) => {
@@ -1913,6 +1936,38 @@ export default function App() {
 
     await dataClient.createNotification(insertPayload);
     return true;
+  };
+
+  const openPatientHighlightComposer = (patientId: string) => {
+    const patient = patients.find((entry) => entry.id === patientId);
+    if (!patient) return;
+    setHighlightTarget({ patientId: patient.id, patientName: patient.displayName });
+  };
+
+  const sendPatientHighlight = async (payload: {
+    patientId: string;
+    message: string;
+    priority: "normal" | "urgent";
+  }) => {
+    const assignedEmail =
+      caseAssignmentEmails[payload.patientId] ??
+      (caseAssignments[payload.patientId]?.includes("@") ? caseAssignments[payload.patientId] : "");
+
+    if (!assignedEmail) {
+      window.alert("This patient does not have an assigned counselor email yet. Assign the case first, then send a highlight note.");
+      return false;
+    }
+
+    const patient = patients.find((entry) => entry.id === payload.patientId);
+    if (!patient) return false;
+
+    return sendNotification({
+      recipientEmail: assignedEmail,
+      patientId: payload.patientId,
+      title: `Patient highlight: ${patient.displayName}`,
+      message: payload.message,
+      priority: payload.priority,
+    });
   };
 
   const dismissNotification = async (notificationId: string) => {
@@ -2644,6 +2699,8 @@ export default function App() {
                         onSelect={setSelectedId}
                         onOpen={openPatient}
                         selected={selected}
+                        canHighlightPatient={hasAdminRole}
+                        onHighlightPatient={openPatientHighlightComposer}
                       />
                     </div>
                   </section>
@@ -2757,6 +2814,20 @@ export default function App() {
             onSend={async (message) => {
               await replyToNotification(replyTarget.notificationId, message);
               setReplyTarget(null);
+            }}
+          />
+        ) : null}
+        {highlightTarget && hasAdminRole ? (
+          <PatientHighlightModal
+            patientName={highlightTarget.patientName}
+            onClose={() => setHighlightTarget(null)}
+            onSend={async ({ message, priority }) => {
+              const ok = await sendPatientHighlight({
+                patientId: highlightTarget.patientId,
+                message,
+                priority,
+              });
+              if (ok) setHighlightTarget(null);
             }}
           />
         ) : null}
@@ -2912,6 +2983,8 @@ export default function App() {
               setPatients((prev) => prev.filter((x) => x.id !== p.id));
               setRoute({ name: "home" });
             }}
+            canHighlightPatient={hasAdminRole}
+            onHighlightPatient={() => openPatientHighlightComposer(p.id)}
           />
         ) : (
           <div className="panel">
@@ -3034,6 +3107,8 @@ function SearchResults({
   onSelect,
   onOpen,
   selected,
+  canHighlightPatient,
+  onHighlightPatient,
 }: {
   view: ViewMode;
   rows: Patient[];
@@ -3048,6 +3123,8 @@ function SearchResults({
   onSelect: (id: string) => void;
   onOpen: (id: string) => void;
   selected?: Patient;
+  canHighlightPatient: boolean;
+  onHighlightPatient: (patientId: string) => void;
 }) {
   const weekDate = todayIso();
   const [docEditor, setDocEditor] = useState<{ patientId: string; current: string[] } | null>(null);
@@ -3176,7 +3253,18 @@ function SearchResults({
             </div>
           </div>
           <div className="workspacePreviewBody">
-            {selected ? <PreviewCard patient={selected} sessions={sessions} compliance={complianceByPatient[selected.id]} assigned={caseAssignments[selected.id] === counselorId} /> : <div className="workspaceEmptyState">Select a patient to preview their schedule and requirements.</div>}
+            {selected ? (
+              <PreviewCard
+                patient={selected}
+                sessions={sessions}
+                compliance={complianceByPatient[selected.id]}
+                assigned={caseAssignments[selected.id] === counselorId}
+                canHighlight={canHighlightPatient}
+                onHighlight={() => onHighlightPatient(selected.id)}
+              />
+            ) : (
+              <div className="workspaceEmptyState">Select a patient to preview their schedule and requirements.</div>
+            )}
           </div>
         </div>
       </div>
@@ -3553,6 +3641,65 @@ function NotificationReplyModal({
   );
 }
 
+function PatientHighlightModal({
+  patientName,
+  onClose,
+  onSend,
+}: {
+  patientName: string;
+  onClose: () => void;
+  onSend: (payload: { message: string; priority: "normal" | "urgent" }) => Promise<void>;
+}) {
+  const [message, setMessage] = useState("");
+  const [priority, setPriority] = useState<"normal" | "urgent">("normal");
+  const [sending, setSending] = useState(false);
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHead">
+          <div className="modalTitle">Highlight patient for counselor</div>
+          <button className="modalClose" onClick={onClose}>✕</button>
+        </div>
+        <div className="modalBody">
+          <div className="workspaceAgendaMeta">Patient</div>
+          <div className="workspaceAgendaDetail">{patientName}</div>
+          <label className="addField" style={{ marginTop: 12 }}>
+            <span className="addLabel">Priority</span>
+            <select className="select" value={priority} onChange={(e) => setPriority(e.target.value as "normal" | "urgent")}>
+              <option value="normal">Normal</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </label>
+          <label className="addField" style={{ marginTop: 12 }}>
+            <span className="addLabel">Note</span>
+            <textarea
+              className="authInput controlCenterTextarea"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Type what the counselor should focus on next."
+            />
+          </label>
+        </div>
+        <div className="modalFoot">
+          <button className="btn ghost" onClick={onClose} disabled={sending}>Cancel</button>
+          <button
+            className="btn"
+            disabled={sending || !message.trim()}
+            onClick={async () => {
+              setSending(true);
+              await onSend({ message: message.trim(), priority });
+              setSending(false);
+            }}
+          >
+            {sending ? "Sending..." : "Send highlight"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ThemePicker({ theme, setTheme }: { theme: ThemeId; setTheme: (t: ThemeId) => void }) {
   const [open, setOpen] = useState(false);
   return (
@@ -3586,11 +3733,15 @@ function PreviewCard({
   sessions,
   compliance,
   assigned,
+  canHighlight,
+  onHighlight,
 }: {
   patient: Patient;
   sessions: Session[];
   compliance?: PatientCompliance;
   assigned: boolean;
+  canHighlight: boolean;
+  onHighlight: () => void;
 }) {
   const drugTest = getDrugTestSummary(patient, compliance, new Date().toISOString().slice(0, 10));
   const problemList = getProblemListSummary(compliance);
@@ -3606,6 +3757,11 @@ function PreviewCard({
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {canHighlight ? (
+            <button className="btn btnHighlight" onClick={onHighlight}>
+              Highlight for counselor
+            </button>
+          ) : null}
           {assigned ? <span className="miniAssignmentTag">My case load</span> : null}
           <div className={pillClass(patient.kind)}>{patient.kind}</div>
         </div>
@@ -3685,6 +3841,8 @@ function PatientPage({
   onUpdateRosterDetails,
   onUpdatePatient,
   onDeletePatient,
+  canHighlightPatient,
+  onHighlightPatient,
 }: {
   patient: Patient;
   allSessions: Session[];
@@ -3697,6 +3855,8 @@ function PatientPage({
   onUpdateRosterDetails: (patch: Partial<PatientRosterDetails>) => void;
   onUpdatePatient: (next: Patient) => void;
   onDeletePatient: () => void;
+  canHighlightPatient: boolean;
+  onHighlightPatient: () => void;
 }) {
   const [tab, setTab] = useState<"overview" | "intake" | "snap" | "health" | "consents" | "attendance">("overview");
   const [sub, setSub] = useState<IntakeSubmission | null>(null);
@@ -3810,6 +3970,11 @@ function PatientPage({
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {canHighlightPatient ? (
+                <button className="btn btnHighlight" onClick={onHighlightPatient}>
+                  Highlight for counselor
+                </button>
+              ) : null}
               <button className={isAssigned ? "btn" : "btn ghost"} onClick={onToggleAssignment}>
                 {isAssigned ? "Remove from my case load" : "Add to my case load"}
               </button>
