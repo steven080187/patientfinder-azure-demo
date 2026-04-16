@@ -65,6 +65,31 @@ function getLoginScopes() {
   return apiScope ? ["openid", "profile", "email", apiScope] : ["openid", "profile", "email"];
 }
 
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const json = atob(padded);
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function parseRolesFromClaims(claims: Record<string, unknown> | null) {
+  if (!claims) return [] as string[];
+  const roles = claims.roles;
+  if (Array.isArray(roles)) {
+    return roles.filter((value): value is string => typeof value === "string");
+  }
+  if (typeof roles === "string") {
+    return [roles];
+  }
+  return [] as string[];
+}
+
 const msalConfig = getMsalConfig();
 const msalInstance = msalConfig ? new PublicClientApplication(msalConfig) : null;
 
@@ -114,12 +139,13 @@ function AzureAuthStateProvider({ children }: { children: ReactNode }) {
         });
         if (!cancelled) {
           setAccessToken(result.accessToken);
-          const claimRoles = (result.idTokenClaims as { roles?: unknown } | undefined)?.roles;
-          if (Array.isArray(claimRoles)) {
-            setRoles(claimRoles.filter((value): value is string => typeof value === "string"));
-          } else {
-            setRoles([]);
+          const accessClaims = decodeJwtPayload(result.accessToken);
+          const accessRoles = parseRolesFromClaims(accessClaims);
+          if (accessRoles.length) {
+            setRoles(accessRoles);
+            return;
           }
+          setRoles(parseRolesFromClaims((result.idTokenClaims as Record<string, unknown> | undefined) ?? null));
         }
       } catch {
         if (!cancelled) {

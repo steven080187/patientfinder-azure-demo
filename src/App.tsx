@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { getDataClient } from "./data/client";
 import { getAzureAuthOptions, loginToAzureDemo, setAzureApiAccessTokenProvider } from "./data/azureApiDataClient";
+import { useAzureAuth } from "./auth/azureAuth";
 import type {
   AzureDemoUser,
   DataClient,
@@ -192,6 +193,7 @@ type Route =
   | { name: "groups" };
 
 type AuthedRoute = Route | { name: "attendance" };
+type AuthMode = "demo" | "entra";
 
 const LOCK_SCREEN_JOKES = [
   "SUD counseling is 20% clinical skill and 80% getting the group back from snack break.",
@@ -1173,6 +1175,7 @@ const THEME_COLORS: Record<ThemeId, string> = {
 /* -------------------- App -------------------- */
 
 export default function App() {
+  const azureAuth = useAzureAuth();
   const publicGroupToken = getPublicGroupTokenFromPath();
   const azureDemoSessionKey = "patientfinder.azure-demo.session.v1";
   const [azureDemoSession, setAzureDemoSession] = useState<AzureDemoSession | null>(() => {
@@ -1185,6 +1188,7 @@ export default function App() {
       return null;
     }
   });
+  const [authMode, setAuthMode] = useState<AuthMode>("demo");
   const [azureDemoUsers, setAzureDemoUsers] = useState<AzureDemoUser[]>([]);
   const [route, setRoute] = useState<AuthedRoute>({ name: "home" });
   const [loadingPatients, setLoadingPatients] = useState(false);
@@ -1237,11 +1241,13 @@ export default function App() {
     void getAzureAuthOptions()
       .then((payload) => {
         if (!cancelled) {
-          setAzureDemoUsers(payload.demoUsers ?? []);
+          setAuthMode(payload.authMode ?? "demo");
+          setAzureDemoUsers(payload.authMode === "demo" ? (payload.demoUsers ?? []) : []);
         }
       })
       .catch(() => {
         if (!cancelled) {
+          setAuthMode("demo");
           setAzureDemoUsers([]);
         }
       });
@@ -1250,8 +1256,21 @@ export default function App() {
     };
   }, []);
 
+  const isEntraMode = authMode === "entra" && azureAuth.enabled;
+  const activeAuthUser = isEntraMode
+    ? (azureAuth.user
+      ? {
+          id: azureAuth.user.id,
+          email: azureAuth.user.email,
+          name: azureAuth.user.name,
+          roles: azureAuth.roles,
+        }
+      : null)
+    : (azureDemoSession?.user ?? null);
+  const activeAccessToken = isEntraMode ? azureAuth.accessToken : (azureDemoSession?.accessToken ?? null);
+
   useEffect(() => {
-    setAzureApiAccessTokenProvider(async () => azureDemoSession?.accessToken ?? null);
+    setAzureApiAccessTokenProvider(async () => activeAccessToken);
     if (typeof window !== "undefined") {
       if (azureDemoSession) {
         window.localStorage.setItem(azureDemoSessionKey, JSON.stringify(azureDemoSession));
@@ -1262,15 +1281,15 @@ export default function App() {
     return () => {
       setAzureApiAccessTokenProvider(null);
     };
-  }, [azureDemoSession]);
+  }, [activeAccessToken, azureDemoSession]);
 
   useEffect(() => {
-    const hasCounselorRole = azureDemoSession?.user.roles.includes("Counselor") ?? false;
-    const hasAdminRole = azureDemoSession?.user.roles.includes("Admin") ?? false;
-    const hasIntakeRole = azureDemoSession?.user.roles.includes("Intake") ?? false;
+    const hasCounselorRole = activeAuthUser?.roles.includes("Counselor") ?? false;
+    const hasAdminRole = activeAuthUser?.roles.includes("Admin") ?? false;
+    const hasIntakeRole = activeAuthUser?.roles.includes("Intake") ?? false;
     setForceRoster(hasAdminRole || hasIntakeRole);
     setCaseLoadOnly(hasCounselorRole && !hasAdminRole && !hasIntakeRole);
-  }, [azureDemoSession]);
+  }, [activeAuthUser]);
 
 
   useEffect(() => {
@@ -1317,8 +1336,8 @@ export default function App() {
     }
   }, [isMobileWorkspace, privacyLocked]);
 
-  const activeUserId = String(azureDemoSession?.user.id ?? azureDemoSession?.user.email ?? "azure-demo-user").toLowerCase();
-  const activeUserEmail = azureDemoSession?.user.email ?? "";
+  const activeUserId = String(activeAuthUser?.id ?? activeAuthUser?.email ?? "azure-demo-user").toLowerCase();
+  const activeUserEmail = activeAuthUser?.email ?? "";
   const counselorId = activeUserId;
   const counselorLabel = activeUserEmail?.split("@")[0] ?? "My";
 
@@ -1412,7 +1431,7 @@ export default function App() {
     setComplianceByPatient(nextCompliance);
     setPatients(patientsRows.map((row) => mergePatientWithExtras(row, nextExtras[row.id], nextRosterDetails[row.id])));
     // If a counselor has no active assignments yet, default to full roster instead of an empty case-load view.
-    if ((azureDemoSession?.user.roles.includes("Counselor") ?? false) && !(azureDemoSession?.user.roles.includes("Admin") ?? false)) {
+    if ((activeAuthUser?.roles.includes("Counselor") ?? false) && !(activeAuthUser?.roles.includes("Admin") ?? false)) {
       const assignedCount = patientsRows.filter((row: any) => nextAssignments[row.id] === counselorId).length;
       if (assignedCount === 0 && patientsRows.length > 0) {
         setForceRoster(true);
@@ -1455,7 +1474,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (!azureDemoSession) {
+    if (!activeAuthUser) {
       setPatients([]);
       setCaseAssignments({});
       setComplianceByPatient({});
@@ -1469,7 +1488,7 @@ export default function App() {
     }
 
     void loadDashboardData();
-  }, [azureDemoSession, loadDashboardData]);
+  }, [activeAuthUser, loadDashboardData]);
 
 
   const [theme, setThemeState] = useState<ThemeId>(() => {
@@ -1729,6 +1748,10 @@ export default function App() {
   };
 
   const logout = async () => {
+    if (isEntraMode) {
+      await azureAuth.logout();
+      return;
+    }
     setAzureDemoSession(null);
     setRoute({ name: "home" });
     setSearch("");
@@ -2034,7 +2057,14 @@ export default function App() {
     return <PublicGroupSignPage token={publicGroupToken} dataClient={dataClient} />;
   }
 
-  if (!azureDemoSession) {
+  if (!activeAuthUser) {
+    if (isEntraMode) {
+      return (
+        <div className="page authPage">
+          <EntraLoginScreen loading={azureAuth.loading} onLogin={azureAuth.login} />
+        </div>
+      );
+    }
     return (
       <div className="page authPage">
         <AzureDemoLoginScreen
@@ -2681,7 +2711,7 @@ export default function App() {
           openingGroupId={openingGroupId}
           onOpenPdf={openGroupPdf}
           patients={patients}
-          activeCounselorName={azureDemoSession.user.name || azureDemoSession.user.email}
+          activeCounselorName={activeAuthUser.name || activeAuthUser.email}
           activeSession={liveGroupState}
           busy={liveGroupBusy}
           err={liveGroupError}
@@ -5080,6 +5110,43 @@ function AzureDemoLoginScreen({
         </button>
       </div>
 
+      {err ? <div className="authErr">{err}</div> : null}
+    </div>
+  );
+}
+
+function EntraLoginScreen({
+  loading,
+  onLogin,
+}: {
+  loading: boolean;
+  onLogin: () => Promise<void>;
+}) {
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    setErr(null);
+    try {
+      await onLogin();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "";
+      setErr(detail ? `Sign-in failed: ${detail}` : "Microsoft sign-in did not complete.");
+    }
+  };
+
+  return (
+    <div className="authCard">
+      <div className="authBrand">
+        <img className="authLogo" src={patientFinderLogo} alt="Patient Finder logo" />
+      </div>
+      <div className="authTitle">Patient Finder</div>
+      <div className="authSub">Sign in with your NCADD Microsoft account.</div>
+      <div className="authRow">
+        <div />
+        <button className="btn" onClick={submit} disabled={loading}>
+          {loading ? "Opening Microsoft sign-in…" : "Continue with Microsoft"}
+        </button>
+      </div>
       {err ? <div className="authErr">{err}</div> : null}
     </div>
   );

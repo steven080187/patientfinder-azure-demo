@@ -21,6 +21,13 @@ type DemoTokenPayload = {
 
 const defaultUsers: DemoAuthUser[] = [
   {
+    id: env.DEMO_STAFF_USER_ID,
+    email: env.DEMO_STAFF_EMAIL,
+    password: env.DEMO_STAFF_PASSWORD,
+    name: env.DEMO_STAFF_EMAIL.split("@")[0],
+    roles: ["Admin", "Counselor"],
+  },
+  {
     id: "4e83b685-6a3b-452b-a60e-6648f46c8ee2",
     email: "smasters@ncadd-sfv.org",
     password: "Demo123!",
@@ -62,7 +69,7 @@ function parseConfiguredUsers() {
       return defaultUsers;
     }
 
-    return parsed.filter((entry): entry is DemoAuthUser => {
+    const configured = parsed.filter((entry): entry is DemoAuthUser => {
       return Boolean(
         entry &&
           typeof entry.id === "string" &&
@@ -72,12 +79,28 @@ function parseConfiguredUsers() {
           Array.isArray(entry.roles)
       );
     });
+    if (!configured.length) {
+      return defaultUsers;
+    }
+    return configured;
   } catch {
     return defaultUsers;
   }
 }
 
-const demoUsers = parseConfiguredUsers();
+function dedupeUsersByEmail(users: DemoAuthUser[]) {
+  const seen = new Set<string>();
+  const deduped: DemoAuthUser[] = [];
+  for (const user of users) {
+    const email = user.email.trim().toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    deduped.push(user);
+  }
+  return deduped;
+}
+
+const demoUsers = dedupeUsersByEmail(parseConfiguredUsers());
 
 export function getDemoUsers(): AuthenticatedDemoUser[] {
   return demoUsers.map(({ password: _password, ...user }) => user);
@@ -85,7 +108,12 @@ export function getDemoUsers(): AuthenticatedDemoUser[] {
 
 export function findDemoUser(email: string, password: string) {
   const normalized = email.trim().toLowerCase();
-  const match = demoUsers.find((user) => user.email.toLowerCase() === normalized && user.password === password);
+  const match = demoUsers.find((user) => {
+    if (user.password !== password) return false;
+    const userEmail = user.email.trim().toLowerCase();
+    const userAlias = userEmail.split("@")[0] ?? "";
+    return normalized === userEmail || normalized === userAlias;
+  });
   if (!match) return null;
   const { password: _password, ...safeUser } = match;
   return safeUser;
