@@ -61,10 +61,21 @@ jobs:
           name: node-app
           path: .
 
-      - name: Deploy to Azure Web App
-        id: deploy-to-webapp
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: 'pfsbx-front-0412346'
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: .
+      - name: Deploy to Azure Web App (ZipDeploy)
+        env:
+          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          KUDU_URL: https://pfsbx-front-0412346.scm.azurewebsites.net
+        run: |
+          set -euo pipefail
+          printf '%s' "$PUBLISH_PROFILE" > publish-profile.xml
+
+          USERNAME="$(sed -n 's/.*publishMethod=\"ZipDeploy\"[^>]*userName=\"\([^\"]*\)\".*/\1/p' publish-profile.xml | head -n1)"
+          PASSWORD="$(sed -n 's/.*publishMethod=\"ZipDeploy\"[^>]*userPWD=\"\([^\"]*\)\".*/\1/p' publish-profile.xml | head -n1)"
+
+          if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
+            echo "Could not parse ZipDeploy credentials from publish profile."
+            exit 1
+          fi
+
+          zip -qr deploy.zip .
+          curl -fsS -u "$USERNAME:$PASSWORD" --data-binary @deploy.zip "$KUDU_URL/api/zipdeploy"
