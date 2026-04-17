@@ -1393,12 +1393,14 @@ export default function App() {
   const activeUserId = String(activeAuthUser?.id ?? activeAuthUser?.email ?? "azure-demo-user").toLowerCase();
   const activeUserEmail = activeAuthUser?.email ?? "";
   const mobileInstallBaseUrl = String(import.meta.env.VITE_MOBILE_INSTALL_URL ?? "").trim();
+  const expoGoUrl = String(import.meta.env.VITE_EXPO_GO_URL ?? "").trim();
   const mobileInstallCode = hashInstallSeed(`${activeUserId}:patientfinder-mobile`);
   const mobileInstallUrl = mobileInstallBaseUrl
     ? `${mobileInstallBaseUrl}${mobileInstallBaseUrl.includes("?") ? "&" : "?"}invite=${encodeURIComponent(mobileInstallCode)}`
     : "";
-  const mobileInstallQrUrl = mobileInstallUrl
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileInstallUrl)}`
+  const mobileInstallQrTarget = expoGoUrl || mobileInstallUrl;
+  const mobileInstallQrUrl = mobileInstallQrTarget
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileInstallQrTarget)}`
     : "";
   const expoGoInfoUrl = "https://expo.dev/go";
   const counselorId = activeUserId;
@@ -2405,9 +2407,13 @@ export default function App() {
                         <button
                           className="workspaceActionBtn"
                           onClick={() => {
-                            window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
+                            if (expoGoUrl) {
+                              window.open(expoGoUrl, "_blank", "noopener,noreferrer");
+                            } else {
+                              window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
+                            }
                             window.alert(
-                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go and scan this QR code.\n3) If scan fails, paste this link in Expo Go:\n${mobileInstallUrl}`,
+                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go and scan this QR code.\n3) If scan fails, paste this link in Expo Go:\n${mobileInstallQrTarget}`,
                             );
                           }}
                         >
@@ -2634,9 +2640,13 @@ export default function App() {
                         <button
                           className="workspaceActionBtn"
                           onClick={() => {
-                            window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
+                            if (expoGoUrl) {
+                              window.open(expoGoUrl, "_blank", "noopener,noreferrer");
+                            } else {
+                              window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
+                            }
                             window.alert(
-                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go and scan this QR code.\n3) If scan fails, paste this link in Expo Go:\n${mobileInstallUrl}`,
+                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go and scan this QR code.\n3) If scan fails, paste this link in Expo Go:\n${mobileInstallQrTarget}`,
                             );
                           }}
                         >
