@@ -5,6 +5,7 @@ import type {
   GroupSessionSummary,
   LiveGroupDetailResponse,
   LiveGroupStartResponse,
+  PatientsPagePayload,
   PublicGroupSessionInfo,
 } from "./types";
 
@@ -154,9 +155,30 @@ export async function loginToAzureDemo(email: string, password: string) {
 }
 
 export const azureApiDataClient: DataClient = {
-  async getDashboard() {
-    const payload = await requestJson<{ dashboard: DashboardPayload }>("/api/dashboard");
+  async getDashboard(options) {
+    const qs = new URLSearchParams();
+    if (options?.includePatients === false) qs.set("include_patients", "0");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const payload = await requestJson<{ dashboard: DashboardPayload }>(`/api/dashboard${suffix}`);
     return payload.dashboard;
+  },
+  async getPatientsPage(params) {
+    const qs = new URLSearchParams();
+    if (params.q?.trim()) qs.set("q", params.q.trim());
+    if (params.status) qs.set("status", params.status);
+    if (params.assignedToUserId) qs.set("assigned_to_user_id", params.assignedToUserId);
+    if (params.assignedToEmail) qs.set("assigned_to_email", params.assignedToEmail);
+    if (params.sortKey) qs.set("sort_key", params.sortKey);
+    if (params.sortDir) qs.set("sort_dir", params.sortDir);
+    if (typeof params.limit === "number") qs.set("limit", String(params.limit));
+    if (typeof params.offset === "number") qs.set("offset", String(params.offset));
+    const payload = await requestJson<{ patients: unknown[]; total?: number; limit?: number; offset?: number }>(`/api/patients?${qs.toString()}`);
+    return {
+      patients: payload.patients ?? [],
+      total: Number(payload.total ?? 0),
+      limit: Number(payload.limit ?? params.limit ?? 50),
+      offset: Number(payload.offset ?? params.offset ?? 0),
+    } satisfies PatientsPagePayload;
   },
   async getPatients() {
     const payload = await requestJson<{ patients: unknown[] }>("/api/patients");

@@ -6,15 +6,87 @@ import type { IntakeSubmissionRow, PatientRow } from "../types.js";
 
 export const patientsRouter = Router();
 
-patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (_req, res, next) => {
+patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
   try {
+    const q = String(req.query.q ?? "").trim();
+    const statusParam = String(req.query.status ?? "").trim().toLowerCase();
+    const sortKeyParam = String(req.query.sort_key ?? "name").trim().toLowerCase();
+    const sortDirParam = String(req.query.sort_dir ?? "asc").trim().toLowerCase();
+    const assignedToUserId = String(req.query.assigned_to_user_id ?? "").trim().toLowerCase();
+    const assignedToEmail = String(req.query.assigned_to_email ?? "").trim().toLowerCase();
+    const offset = Math.max(0, Number.parseInt(String(req.query.offset ?? "0"), 10) || 0);
+    const requestedLimit = Number.parseInt(String(req.query.limit ?? "50"), 10) || 50;
+    const limit = Math.min(200, Math.max(1, requestedLimit));
+
+    const statuses = new Set(["new", "active", "past"]);
+    const statusFilter = statuses.has(statusParam) ? statusParam : null;
+
+    const sortColumnByKey: Record<string, string> = {
+      name: "p.full_name",
+      intake: "p.intake_date",
+      lastvisit: "p.last_visit_date",
+      kind: "p.status",
+    };
+    const sortColumn = sortColumnByKey[sortKeyParam] ?? "p.full_name";
+    const sortDir = sortDirParam === "desc" ? "desc" : "asc";
+
+    const needsAssignmentJoin = Boolean(assignedToUserId || assignedToEmail);
+    const fromSql = needsAssignmentJoin
+      ? `from public.patients p
+         left join public.patient_case_assignments a on a.patient_id = p.id`
+      : `from public.patients p`;
+
+    const whereParts: string[] = [];
+    const params: unknown[] = [];
+
+    if (q) {
+      params.push(`%${q}%`);
+      const i = params.length;
+      whereParts.push(
+        `(p.full_name ilike $${i}
+          or coalesce(p.mrn, '') ilike $${i}
+          or coalesce(p.external_id, '') ilike $${i}
+          or coalesce(p.primary_program, '') ilike $${i}
+          or coalesce(p.counselor_name, '') ilike $${i})`
+      );
+    }
+
+    if (statusFilter) {
+      params.push(statusFilter);
+      whereParts.push(`p.status = $${params.length}`);
+    }
+
+    if (assignedToUserId || assignedToEmail) {
+      const assignmentParts: string[] = [];
+      if (assignedToUserId) {
+        params.push(assignedToUserId);
+        assignmentParts.push(`lower(coalesce(a.counselor_user_id::text, '')) = $${params.length}`);
+      }
+      if (assignedToEmail) {
+        params.push(assignedToEmail);
+        assignmentParts.push(`lower(coalesce(a.counselor_email, '')) = $${params.length}`);
+      }
+      whereParts.push(`(${assignmentParts.join(" or ")})`);
+    }
+
+    const whereSql = whereParts.length ? `where ${whereParts.join(" and ")}` : "";
+
+    const countRows = await query<{ count: string }>(`select count(*)::text as count ${fromSql} ${whereSql}`, params);
+    const total = Number.parseInt(countRows[0]?.count ?? "0", 10) || 0;
+
+    const dataParams = [...params, limit, offset];
     const rows = await query<PatientRow>(
-      `select id, full_name, mrn, external_id, status, location, intake_date, last_visit_date, next_appt_date,
-              primary_program, counselor_name, flags, created_at, updated_at
-         from public.patients
-        order by full_name asc nulls last`
+      `select p.id, p.full_name, p.mrn, p.external_id, p.status, p.location, p.intake_date, p.last_visit_date, p.next_appt_date,
+              p.primary_program, p.counselor_name, p.flags, p.created_at, p.updated_at
+         ${fromSql}
+         ${whereSql}
+        order by ${sortColumn} ${sortDir} nulls last, p.id asc
+        limit $${dataParams.length - 1}
+       offset $${dataParams.length}`,
+      dataParams
     );
-    res.json({ ok: true, patients: rows });
+
+    res.json({ ok: true, patients: rows, total, limit, offset });
   } catch (error) {
     next(error);
   }

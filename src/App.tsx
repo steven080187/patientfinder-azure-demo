@@ -1246,9 +1246,16 @@ export default function App() {
 
   const [search, setSearch] = useState("");
   const { raw: qRaw, compact: qCompact } = useMemo(() => normalizeQuery(search), [search]);
+  const [patientPage, setPatientPage] = useState(0);
+  const patientPageSize = 50;
+  const [patientTotal, setPatientTotal] = useState(0);
 
   const [forceRoster, setForceRoster] = useState(false);
   const [caseLoadOnly, setCaseLoadOnly] = useState(true);
+
+  useEffect(() => {
+    setPatientPage(0);
+  }, [qRaw, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1359,6 +1366,7 @@ export default function App() {
     setLoadingPatients(true);
 
     let patientsRows: any[] = [];
+    let totalPatientsRows = 0;
     let assignmentsRows: any[] = [];
     let complianceRows: any[] = [];
     let drugTestsRows: any[] = [];
@@ -1370,11 +1378,32 @@ export default function App() {
     let groupRows: GroupSessionSummary[] = [];
 
     try {
-      const [dashboard, groups] = await Promise.all([
-        dataClient.getDashboard(),
+      const statusMap: Record<PatientKind, "new" | "active" | "past"> = {
+        "New Enrollee": "new",
+        "Active Patient": "active",
+        "Past Patient": "past",
+      };
+      const shouldHideUnscopedRoster = !forceRoster && !caseLoadOnly && !qRaw;
+      const patientsPagePromise = shouldHideUnscopedRoster
+        ? Promise.resolve({ patients: [], total: 0, limit: patientPageSize, offset: patientPage * patientPageSize })
+        : dataClient.getPatientsPage({
+            q: qRaw || undefined,
+            status: kindFilter === "all" ? undefined : statusMap[kindFilter],
+            assignedToUserId: caseLoadOnly ? counselorId : undefined,
+            assignedToEmail: caseLoadOnly ? activeUserEmail.toLowerCase() : undefined,
+            sortKey,
+            sortDir,
+            limit: patientPageSize,
+            offset: patientPage * patientPageSize,
+          });
+
+      const [dashboard, groups, patientsPage] = await Promise.all([
+        dataClient.getDashboard({ includePatients: false }),
         dataClient.getGroupSessions(),
+        patientsPagePromise,
       ]);
-      patientsRows = (dashboard.patients as any[]) ?? [];
+      patientsRows = (patientsPage.patients as any[]) ?? [];
+      totalPatientsRows = Number(patientsPage.total ?? 0);
       assignmentsRows = (dashboard.assignments as any[]) ?? [];
       complianceRows = (dashboard.compliance as any[]) ?? [];
       drugTestsRows = (dashboard.drugTests as any[]) ?? [];
@@ -1449,6 +1478,7 @@ export default function App() {
     setCaseAssignmentEmails(nextAssignmentEmails);
     setTeammateEmails([...nextTeammateEmails].sort());
     setComplianceByPatient(nextCompliance);
+    setPatientTotal(totalPatientsRows);
     setPatients(patientsRows.map((row) => mergePatientWithExtras(row, nextExtras[row.id], nextRosterDetails[row.id])));
     // If a counselor has no active assignments yet, default to full roster instead of an empty case-load view.
     if ((activeAuthUser?.roles.includes("Counselor") ?? false) && !(activeAuthUser?.roles.includes("Admin") ?? false)) {
@@ -1498,6 +1528,7 @@ export default function App() {
       setPatients([]);
       setCaseAssignments({});
       setCaseAssignmentEmails({});
+      setPatientTotal(0);
       setComplianceByPatient({});
       setBillingEntries([]);
       setGroupSessions([]);
@@ -1509,7 +1540,7 @@ export default function App() {
     }
 
     void loadDashboardData();
-  }, [activeAuthUser, loadDashboardData]);
+  }, [activeAuthUser, patientPage, qRaw, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, loadDashboardData]);
 
 
   const [theme, setThemeState] = useState<ThemeId>(() => {
@@ -1568,6 +1599,11 @@ export default function App() {
 
     return rows.map((r) => r.p);
   }, [indexed, qRaw, qCompact, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, caseAssignments, counselorId, dashboardFilter, complianceByPatient, currentWeek, sessions]);
+
+  const patientPageStart = patientTotal ? patientPage * patientPageSize + 1 : 0;
+  const patientPageEnd = Math.min(patientTotal, (patientPage + 1) * patientPageSize);
+  const canPageBack = patientPage > 0;
+  const canPageForward = patientPageEnd < patientTotal;
 
   const [selectedId, setSelectedId] = useState<string>(patients[0]?.id ?? "");
   const selected = useMemo(() => results.find((p) => p.id === selectedId) ?? results[0], [results, selectedId]);
@@ -2667,7 +2703,15 @@ export default function App() {
                           </button>
 
                           <div className="workspaceResultsCount">
-                            {results.length} patient{results.length === 1 ? "" : "s"}
+                            {results.length} visible • {patientPageStart}-{patientPageEnd} of {patientTotal}
+                          </div>
+                          <div className="workspaceSheetControls">
+                            <button className="btn ghost" disabled={!canPageBack || loadingPatients} onClick={() => setPatientPage((prev) => Math.max(0, prev - 1))}>
+                              Prev
+                            </button>
+                            <button className="btn ghost" disabled={!canPageForward || loadingPatients} onClick={() => setPatientPage((prev) => prev + 1)}>
+                              Next
+                            </button>
                           </div>
                         </div>
 

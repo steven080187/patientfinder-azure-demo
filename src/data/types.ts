@@ -12,6 +12,13 @@ export type DashboardPayload = {
   billingEntries: unknown[];
 };
 
+export type PatientsPagePayload = {
+  patients: unknown[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type GroupSessionSummary = {
   id: string;
   counselor_name: string;
@@ -76,7 +83,17 @@ export type PublicGroupSessionInfo = {
 };
 
 export interface DataClient {
-  getDashboard(): Promise<DashboardPayload>;
+  getDashboard(options?: { includePatients?: boolean }): Promise<DashboardPayload>;
+  getPatientsPage(params: {
+    q?: string;
+    status?: "new" | "active" | "past";
+    assignedToUserId?: string;
+    assignedToEmail?: string;
+    sortKey?: "name" | "intake" | "lastVisit" | "kind";
+    sortDir?: "asc" | "desc";
+    limit?: number;
+    offset?: number;
+  }): Promise<PatientsPagePayload>;
   getPatients(): Promise<unknown[]>;
   getPatient(patientId: string): Promise<unknown | null>;
   getLatestIntakeSubmission(patientId: string): Promise<unknown | null>;

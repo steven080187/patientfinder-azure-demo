@@ -25,6 +25,7 @@ dashboardRouter.get("/api/dashboard", requireAuth, requireAnyRole("Admin", "Coun
   try {
     const user = getRequestUser(req);
     const canSeeAllNotifications = Boolean(user?.roles.includes("Admin"));
+    const includePatients = String(req.query.include_patients ?? "1") !== "0";
 
     const notificationsPromise = canSeeAllNotifications
       ? queryOptionalDashboardTable(`select * from public.in_app_notifications order by created_at desc`, "in_app_notifications")
@@ -49,7 +50,7 @@ dashboardRouter.get("/api/dashboard", requireAuth, requireAnyRole("Admin", "Coun
       notifications,
       billingEntries,
     ] = await Promise.all([
-      query(`select * from public.patients order by full_name asc nulls last`),
+      includePatients ? query(`select * from public.patients order by full_name asc nulls last`) : Promise.resolve([]),
       queryOptionalDashboardTable(`select * from public.patient_case_assignments`, "patient_case_assignments"),
       queryOptionalDashboardTable(`select * from public.patient_compliance`, "patient_compliance"),
       queryOptionalDashboardTable(`select * from public.patient_drug_tests order by date desc`, "patient_drug_tests"),
