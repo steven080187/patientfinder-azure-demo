@@ -28,7 +28,11 @@ jobs:
         run: npm ci
 
       - name: Build frontend
-        run: npm run build
+        env:
+          VITE_AZURE_API_BASE_URL: ${{ secrets.VITE_AZURE_API_BASE_URL }}
+        run: |
+          export VITE_AZURE_API_BASE_URL="${VITE_AZURE_API_BASE_URL:-https://pfsbx-api-0412346.azurewebsites.net}"
+          npm run build
 
       - name: Keep production dependencies only
         run: npm prune --omit=dev
