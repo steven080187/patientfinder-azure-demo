@@ -86,7 +86,7 @@ export interface DataClient {
   getDashboard(options?: { includePatients?: boolean }): Promise<DashboardPayload>;
   getPatientsPage(params: {
     q?: string;
-    status?: "new" | "active" | "past";
+    status?: "new" | "current" | "rss_plus" | "rss" | "former";
     pastTier?: "recent" | "archived";
     assignedToUserId?: string;
     assignedToEmail?: string;

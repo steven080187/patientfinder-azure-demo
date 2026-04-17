@@ -20,8 +20,8 @@ import "./App.css";
 
 /* -------------------- Types -------------------- */
 
-type PatientKind = "New Enrollee" | "Active Patient" | "Past Patient";
-type PatientKindFilter = "all" | PatientKind | "Past Recent" | "Past Archived";
+type PatientKind = "New Patient" | "Current Patient" | "RSS+" | "RSS" | "Former Patient";
+type PatientKindFilter = "all" | PatientKind | "Former Recent" | "Former Archived";
 type ViewMode = "sheet" | "cards" | "split";
 type SortKey = "name" | "intake" | "lastVisit" | "kind";
 type WorkspaceTab = "roster" | "attention";
@@ -306,8 +306,8 @@ function normalizeQuery(q: string) {
 }
 
 function pillClass(kind: PatientKind) {
-  if (kind === "New Enrollee") return "pill pill-new";
-  if (kind === "Active Patient") return "pill pill-active";
+  if (kind === "New Patient") return "pill pill-new";
+  if (kind === "Current Patient" || kind === "RSS+" || kind === "RSS") return "pill pill-active";
   return "pill pill-past";
 }
 
@@ -333,8 +333,8 @@ function isPastRecentPatient(patient: Patient, nowIso: string) {
 
 function matchesKindFilter(patient: Patient, filter: PatientKindFilter, nowIso: string) {
   if (filter === "all") return true;
-  if (filter === "Past Recent") return patient.kind === "Past Patient" && isPastRecentPatient(patient, nowIso);
-  if (filter === "Past Archived") return patient.kind === "Past Patient" && !isPastRecentPatient(patient, nowIso);
+  if (filter === "Former Recent") return patient.kind === "Former Patient" && isPastRecentPatient(patient, nowIso);
+  if (filter === "Former Archived") return patient.kind === "Former Patient" && !isPastRecentPatient(patient, nowIso);
   return patient.kind === filter;
 }
 
@@ -881,12 +881,18 @@ function toneLabel(tone: "good" | "neutral" | "behind" | "over") {
 }
 
 function mergePatientWithExtras(row: any, extras: PatientExtras | undefined, rosterDetails: PatientRosterDetails | undefined): Patient {
+  const normalizedKind = toPatientKind(row.status);
+  const intakeDate = row.intake_date;
+  const kind = normalizedKind === "New Patient" && intakeDate && dayDiff(intakeDate, todayIso()) > 20
+    ? "Current Patient"
+    : normalizedKind;
+
   return {
     id: row.id,
     displayName: row.full_name || "Unknown",
     mrn: row.mrn,
-    kind: toPatientKind(row.status),
-    intakeDate: row.intake_date,
+    kind,
+    intakeDate,
     lastVisitDate: row.last_visit_date,
     nextApptDate: row.next_appt_date,
     primaryProgram: row.primary_program,
@@ -1101,12 +1107,14 @@ function WeeklyAttendanceMeter({
 
 /* ---- Status normalizer (handles legacy DB values like 'new'/'active') ---- */
 function toPatientKind(status: string | null | undefined): PatientKind {
-  if (!status) return "New Enrollee";
+  if (!status) return "New Patient";
   const s = status.toLowerCase();
-  if (s === "active patient" || s === "active") return "Active Patient";
-  if (s === "past patient" || s === "past" || s === "inactive") return "Past Patient";
-  if (s === "new enrollee" || s === "new") return "New Enrollee";
-  return "New Enrollee";
+  if (s === "new patient" || s === "new enrollee" || s === "new") return "New Patient";
+  if (s === "current patient" || s === "current" || s === "active patient" || s === "active") return "Current Patient";
+  if (s === "rss+" || s === "rss_plus" || s === "rss plus") return "RSS+";
+  if (s === "rss") return "RSS";
+  if (s === "former patient" || s === "former" || s === "past patient" || s === "past" || s === "inactive") return "Former Patient";
+  return "New Patient";
 }
 
 /* ---- Medical questions (from medical.html QUESTIONS array) ---- */
@@ -1393,15 +1401,17 @@ export default function App() {
     let groupRows: GroupSessionSummary[] = [];
 
     try {
-      const statusMap: Record<PatientKind, "new" | "active" | "past"> = {
-        "New Enrollee": "new",
-        "Active Patient": "active",
-        "Past Patient": "past",
+      const statusMap: Record<PatientKind, "new" | "current" | "rss_plus" | "rss" | "former"> = {
+        "New Patient": "new",
+        "Current Patient": "current",
+        "RSS+": "rss_plus",
+        "RSS": "rss",
+        "Former Patient": "former",
       };
-      const patientStatus = kindFilter === "all" || kindFilter === "Past Recent" || kindFilter === "Past Archived"
+      const patientStatus = kindFilter === "all" || kindFilter === "Former Recent" || kindFilter === "Former Archived"
         ? undefined
         : statusMap[kindFilter];
-      const pastTier = kindFilter === "Past Recent" ? "recent" : kindFilter === "Past Archived" ? "archived" : undefined;
+      const pastTier = kindFilter === "Former Recent" ? "recent" : kindFilter === "Former Archived" ? "archived" : undefined;
       const shouldHideUnscopedRoster = !forceRoster && !caseLoadOnly && !qRaw;
       const patientsPagePromise = shouldHideUnscopedRoster
         ? Promise.resolve({ patients: [], total: 0, limit: patientPageSize, offset: patientPage * patientPageSize })
@@ -2706,11 +2716,13 @@ export default function App() {
 
                           <select className="select" value={kindFilter} onChange={(e) => setKindFilter(e.target.value as PatientKindFilter)}>
                             <option value="all">All statuses</option>
-                            <option value="New Enrollee">New enrollees</option>
-                            <option value="Active Patient">Active patients</option>
-                            <option value="Past Patient">Past patients</option>
-                            <option value="Past Recent">Past (0-90 days)</option>
-                            <option value="Past Archived">Past (90+ days)</option>
+                            <option value="New Patient">New (0-20 days)</option>
+                            <option value="Current Patient">Current patients</option>
+                            <option value="RSS+">RSS+</option>
+                            <option value="RSS">RSS</option>
+                            <option value="Former Patient">Former patients</option>
+                            <option value="Former Recent">Former (0-90 days)</option>
+                            <option value="Former Archived">Former (90+ days)</option>
                           </select>
 
                           <select className="select" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
@@ -3992,9 +4004,11 @@ function PatientPage({
   const handleStatusChange = async (newKind: PatientKind) => {
     setStatusChanging(true);
     const statusMap: Record<PatientKind, string> = {
-      "New Enrollee": "new",
-      "Active Patient": "active",
-      "Past Patient": "past",
+      "New Patient": "new",
+      "Current Patient": "current",
+      "RSS+": "rss_plus",
+      "RSS": "rss",
+      "Former Patient": "former",
     };
     await dataClient.updatePatient(patient.id, { status: statusMap[newKind] });
     setStatusChanging(false);
@@ -4051,9 +4065,11 @@ function PatientPage({
                 disabled={statusChanging}
                 style={{ minWidth: 140 }}
               >
-                <option value="New Enrollee">New Enrollee</option>
-                <option value="Active Patient">Active Patient</option>
-                <option value="Past Patient">Past Patient</option>
+                <option value="New Patient">New Patient</option>
+                <option value="Current Patient">Current Patient</option>
+                <option value="RSS+">RSS+</option>
+                <option value="RSS">RSS</option>
+                <option value="Former Patient">Former Patient</option>
               </select>
               <div className={pillClass(patient.kind)}>{patient.kind}</div>
               <button
@@ -6422,7 +6438,7 @@ function AddPatientModal({
   const [form, setForm] = useState({
     full_name: "",
     mrn: "",
-    status: "new" as "new" | "active" | "past",
+    status: "new" as "new" | "current" | "rss_plus" | "rss" | "former",
     location: "Van Nuys",
     intake_date: today,
     last_visit_date: "",
@@ -6501,9 +6517,11 @@ function AddPatientModal({
             <label className="addField">
               <span className="addLabel">Status</span>
               <select className="select" value={form.status} onChange={f("status")}>
-                <option value="new">New Enrollee</option>
-                <option value="active">Active Patient</option>
-                <option value="past">Past Patient</option>
+                <option value="new">New Patient</option>
+                <option value="current">Current Patient</option>
+                <option value="rss_plus">RSS+</option>
+                <option value="rss">RSS</option>
+                <option value="former">Former Patient</option>
               </select>
             </label>
             <label className="addField">

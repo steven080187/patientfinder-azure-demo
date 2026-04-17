@@ -19,7 +19,7 @@ patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counse
     const requestedLimit = Number.parseInt(String(req.query.limit ?? "50"), 10) || 50;
     const limit = Math.min(200, Math.max(1, requestedLimit));
 
-    const statuses = new Set(["new", "active", "past"]);
+    const statuses = new Set(["new", "current", "rss_plus", "rss", "former", "active", "past", "inactive"]);
     const statusFilter = statuses.has(statusParam) ? statusParam : null;
 
     const sortColumnByKey: Record<string, string> = {
@@ -53,12 +53,31 @@ patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counse
     }
 
     if (statusFilter) {
-      params.push(statusFilter);
-      whereParts.push(`p.status = $${params.length}`);
+      if (statusFilter === "new") {
+        whereParts.push(`lower(coalesce(p.status, '')) in ('new', 'new patient', 'new enrollee')`);
+        whereParts.push(`coalesce(p.intake_date, p.created_at::date) >= (timezone('utc', now())::date - interval '20 days')::date`);
+      } else if (statusFilter === "current") {
+        whereParts.push(`(
+          lower(coalesce(p.status, '')) in ('current', 'current patient', 'active', 'active patient')
+          or (
+            lower(coalesce(p.status, '')) in ('new', 'new patient', 'new enrollee')
+            and coalesce(p.intake_date, p.created_at::date) < (timezone('utc', now())::date - interval '20 days')::date
+          )
+        )`);
+      } else if (statusFilter === "rss_plus") {
+        whereParts.push(`lower(coalesce(p.status, '')) in ('rss+', 'rss_plus', 'rss plus')`);
+      } else if (statusFilter === "rss") {
+        whereParts.push(`lower(coalesce(p.status, '')) = 'rss'`);
+      } else if (statusFilter === "former" || statusFilter === "past" || statusFilter === "inactive") {
+        whereParts.push(`lower(coalesce(p.status, '')) in ('former', 'former patient', 'past', 'past patient', 'inactive')`);
+      } else {
+        params.push(statusFilter);
+        whereParts.push(`lower(coalesce(p.status, '')) = $${params.length}`);
+      }
     }
 
     if (pastTierParam === "recent" || pastTierParam === "archived") {
-      whereParts.push(`lower(coalesce(p.status, '')) in ('past', 'past patient', 'inactive')`);
+      whereParts.push(`lower(coalesce(p.status, '')) in ('former', 'past', 'past patient', 'inactive')`);
       const comparison = pastTierParam === "recent" ? ">=" : "<";
       whereParts.push(
         `coalesce(p.last_visit_date, p.updated_at::date, p.intake_date, p.created_at::date) ${comparison} (timezone('utc', now())::date - interval '90 days')::date`
