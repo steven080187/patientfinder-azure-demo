@@ -1400,6 +1400,7 @@ export default function App() {
   const mobileInstallQrUrl = mobileInstallUrl
     ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileInstallUrl)}`
     : "";
+  const expoGoInfoUrl = "https://expo.dev/go";
   const counselorId = activeUserId;
   const counselorLabel = activeUserEmail?.split("@")[0] ?? "My";
 
@@ -2389,17 +2390,28 @@ export default function App() {
                       <div style={{ display: "grid", gap: 10 }}>
                         <img
                           src={mobileInstallQrUrl}
-                          alt="Install PatientFinder mobile app"
+                          alt="Open PatientFinder mobile app in Expo Go"
                           style={{ width: 150, height: 150, borderRadius: 10, background: "#fff", padding: 8 }}
                         />
                         <div style={{ fontSize: 12, opacity: 0.85 }}>
-                          Unique install QR for {activeAuthUser.email}
+                          iPhone uses Expo Go (free) and does not require an Apple Developer account.
                         </div>
                         <button
                           className="workspaceActionBtn"
                           onClick={() => window.open(mobileInstallUrl, "_blank", "noopener,noreferrer")}
                         >
-                          Open install link
+                          Android install
+                        </button>
+                        <button
+                          className="workspaceActionBtn"
+                          onClick={() => {
+                            window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
+                            window.alert(
+                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go and scan this QR code.\n3) If scan fails, paste this link in Expo Go:\n${mobileInstallUrl}`,
+                            );
+                          }}
+                        >
+                          iPhone (Expo Go)
                         </button>
                         <button
                           className="workspaceActionBtn"
@@ -2607,14 +2619,28 @@ export default function App() {
                         <div className="workspaceSectionLabel">Mobile install</div>
                         <img
                           src={mobileInstallQrUrl}
-                          alt="Install PatientFinder mobile app"
+                          alt="Open PatientFinder mobile app in Expo Go"
                           style={{ width: 150, height: 150, borderRadius: 10, background: "#fff", padding: 8, justifySelf: "center" }}
                         />
+                        <div style={{ fontSize: 12, opacity: 0.85 }}>
+                          iPhone is Expo Go only (free).
+                        </div>
                         <button
                           className="workspaceActionBtn"
                           onClick={() => window.open(mobileInstallUrl, "_blank", "noopener,noreferrer")}
                         >
-                          Open install link
+                          Android install
+                        </button>
+                        <button
+                          className="workspaceActionBtn"
+                          onClick={() => {
+                            window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
+                            window.alert(
+                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go and scan this QR code.\n3) If scan fails, paste this link in Expo Go:\n${mobileInstallUrl}`,
+                            );
+                          }}
+                        >
+                          iPhone (Expo Go)
                         </button>
                       </div>
                     ) : null}
