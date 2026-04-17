@@ -37,6 +37,11 @@ create table if not exists public.patients (
 
 create index if not exists patients_full_name_idx on public.patients(full_name);
 create index if not exists patients_status_idx on public.patients(status);
+create index if not exists patients_status_lower_idx on public.patients((lower(coalesce(status::text, ''))));
+create index if not exists patients_intake_date_idx on public.patients(intake_date);
+create index if not exists patients_last_visit_date_idx on public.patients(last_visit_date);
+create index if not exists patients_updated_at_idx on public.patients(updated_at);
+create index if not exists patients_former_anchor_date_idx on public.patients((coalesce(last_visit_date, updated_at::date, intake_date, created_at::date)));
 
 drop trigger if exists patients_set_updated_at on public.patients;
 create trigger patients_set_updated_at
@@ -50,6 +55,9 @@ create table if not exists public.patient_case_assignments (
   assigned_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+create index if not exists patient_case_assignments_counselor_user_id_idx on public.patient_case_assignments(counselor_user_id);
+create index if not exists patient_case_assignments_counselor_email_lower_idx on public.patient_case_assignments((lower(coalesce(counselor_email, ''))));
 
 create table if not exists public.patient_compliance (
   patient_id uuid primary key references public.patients(id) on delete cascade,
@@ -130,6 +138,10 @@ create table if not exists public.in_app_notifications (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+create index if not exists in_app_notifications_created_at_idx on public.in_app_notifications(created_at desc);
+create index if not exists in_app_notifications_recipient_email_lower_idx on public.in_app_notifications((lower(coalesce(recipient_email, ''))));
+create index if not exists in_app_notifications_recipient_user_id_idx on public.in_app_notifications(recipient_user_id);
 
 create table if not exists public.group_signin_sessions (
   id uuid primary key,
