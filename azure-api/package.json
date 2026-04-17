@@ -12,6 +12,7 @@
     "db:import:sandbox": "tsx scripts/import-sandbox-dataset.ts"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.29.1",
     "@types/pdfkit": "^0.17.5",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",

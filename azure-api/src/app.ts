@@ -11,6 +11,7 @@ import { healthRouter } from "./routes/health.js";
 import { intakeRouter } from "./routes/intake.js";
 import { mobileSyncRouter } from "./routes/mobileSync.js";
 import { notificationsRouter } from "./routes/notifications.js";
+import { patientDocumentsRouter } from "./routes/patientDocuments.js";
 import { patientsRouter } from "./routes/patients.js";
 
 export function createApp() {
@@ -41,6 +42,7 @@ export function createApp() {
   app.use(groupsRouter);
   app.use(notificationsRouter);
   app.use(patientsRouter);
+  app.use(patientDocumentsRouter);
   app.use(intakeRouter);
   app.use(mobileSyncRouter);
 

@@ -22,6 +22,9 @@ const envSchema = z.object({
   DEMO_STAFF_PASSWORD: z.string().min(1).default("AzureDemo!2026"),
   DEMO_STAFF_USER_ID: z.string().default("11111111-1111-1111-1111-111111111111"),
   DEMO_MOBILE_TOKEN: z.string().min(1).default("azure-demo-mobile-token"),
+  AZURE_BLOB_CONNECTION_STRING: z.string().optional(),
+  AZURE_BLOB_CONTAINER_NAME: z.string().default("patientfinder-documents"),
+  AZURE_BLOB_BASE_PATH: z.string().default("patient-documents"),
 });
 
 export const env = envSchema.parse(process.env);

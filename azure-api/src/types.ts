@@ -49,3 +49,21 @@ export type GroupSessionRow = {
   created_at: string;
   updated_at: string;
 };
+
+export type PatientDocumentRow = {
+  id: string;
+  patient_id: string;
+  document_type: string;
+  original_filename: string;
+  content_type: string;
+  byte_size: string;
+  sha256: string | null;
+  storage_provider: string;
+  storage_container: string;
+  storage_blob_path: string;
+  storage_url: string | null;
+  uploaded_by_user_id: string | null;
+  uploaded_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+};

@@ -233,3 +233,32 @@ create table if not exists public.intake_submissions (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+create table if not exists public.patient_documents (
+  id uuid primary key,
+  patient_id uuid not null references public.patients(id) on delete cascade,
+  document_type text not null,
+  original_filename text not null,
+  content_type text not null default 'application/pdf',
+  byte_size bigint not null check (byte_size > 0),
+  sha256 text,
+  storage_provider text not null default 'azure_blob',
+  storage_container text not null,
+  storage_blob_path text not null,
+  storage_url text,
+  uploaded_by_user_id uuid,
+  uploaded_by_email text,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists patient_documents_patient_id_created_at_idx
+  on public.patient_documents(patient_id, created_at desc);
+
+create index if not exists patient_documents_storage_blob_path_idx
+  on public.patient_documents(storage_blob_path);
+
+drop trigger if exists patient_documents_set_updated_at on public.patient_documents;
+create trigger patient_documents_set_updated_at
+before update on public.patient_documents
+for each row execute function public.set_updated_at();

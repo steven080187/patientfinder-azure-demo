@@ -82,6 +82,18 @@ export type PublicGroupSessionInfo = {
   location?: string | null;
 };
 
+export type PatientDocumentSummary = {
+  id: string;
+  patient_id: string;
+  document_type: string;
+  original_filename: string;
+  content_type: string;
+  byte_size: number | string;
+  storage_blob_path: string;
+  created_at: string;
+  uploaded_by_email?: string | null;
+};
+
 export interface DataClient {
   getDashboard(options?: { includePatients?: boolean }): Promise<DashboardPayload>;
   getPatientsPage(params: {
@@ -98,6 +110,8 @@ export interface DataClient {
   getPatients(): Promise<unknown[]>;
   getPatient(patientId: string): Promise<unknown | null>;
   getLatestIntakeSubmission(patientId: string): Promise<unknown | null>;
+  getPatientDocuments(patientId: string): Promise<PatientDocumentSummary[]>;
+  downloadPatientDocument(documentId: string): Promise<Blob>;
   createPatient(payload: unknown): Promise<unknown>;
   updatePatient(patientId: string, payload: unknown): Promise<unknown>;
   deletePatient(patientId: string): Promise<void>;

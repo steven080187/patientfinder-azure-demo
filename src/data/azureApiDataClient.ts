@@ -5,6 +5,7 @@ import type {
   GroupSessionSummary,
   LiveGroupDetailResponse,
   LiveGroupStartResponse,
+  PatientDocumentSummary,
   PatientsPagePayload,
   PublicGroupSessionInfo,
 } from "./types";
@@ -192,6 +193,13 @@ export const azureApiDataClient: DataClient = {
   async getLatestIntakeSubmission(patientId: string) {
     const payload = await requestJson<{ intakeSubmission: unknown | null }>(`/api/patients/${patientId}/intake`);
     return payload.intakeSubmission;
+  },
+  async getPatientDocuments(patientId: string) {
+    const payload = await requestJson<{ documents: PatientDocumentSummary[] }>(`/api/patients/${patientId}/documents`);
+    return payload.documents ?? [];
+  },
+  async downloadPatientDocument(documentId: string) {
+    return requestBlob(`/api/patient-documents/${documentId}/download`);
   },
   async createPatient(payload) {
     const response = await sendJson<{ patient: unknown }>("/api/patients", payload);

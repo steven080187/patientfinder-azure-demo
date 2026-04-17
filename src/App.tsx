@@ -9,6 +9,7 @@ import type {
   LiveGroupEntry,
   LiveGroupSessionSnapshot,
   LiveGroupTimeSlot,
+  PatientDocumentSummary,
   PublicGroupSessionInfo,
 } from "./data/types";
 import { CONSENT_FORMS } from './consentForms';
@@ -264,6 +265,15 @@ function formatNotificationTimestamp(value: string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function hashInstallSeed(value: string) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
 }
 
 function getPublicGroupTokenFromPath() {
@@ -1382,6 +1392,14 @@ export default function App() {
 
   const activeUserId = String(activeAuthUser?.id ?? activeAuthUser?.email ?? "azure-demo-user").toLowerCase();
   const activeUserEmail = activeAuthUser?.email ?? "";
+  const mobileInstallBaseUrl = String(import.meta.env.VITE_MOBILE_INSTALL_URL ?? "").trim();
+  const mobileInstallCode = hashInstallSeed(`${activeUserId}:patientfinder-mobile`);
+  const mobileInstallUrl = mobileInstallBaseUrl
+    ? `${mobileInstallBaseUrl}${mobileInstallBaseUrl.includes("?") ? "&" : "?"}invite=${encodeURIComponent(mobileInstallCode)}`
+    : "";
+  const mobileInstallQrUrl = mobileInstallUrl
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileInstallUrl)}`
+    : "";
   const counselorId = activeUserId;
   const counselorLabel = activeUserEmail?.split("@")[0] ?? "My";
 
@@ -2364,6 +2382,41 @@ export default function App() {
                       Logout
                     </button>
                   </div>
+
+                  {mobileInstallUrl ? (
+                    <div className="workspaceSidebarSection">
+                      <div className="workspaceSectionLabel">Mobile install</div>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <img
+                          src={mobileInstallQrUrl}
+                          alt="Install PatientFinder mobile app"
+                          style={{ width: 150, height: 150, borderRadius: 10, background: "#fff", padding: 8 }}
+                        />
+                        <div style={{ fontSize: 12, opacity: 0.85 }}>
+                          Unique install QR for {activeAuthUser.email}
+                        </div>
+                        <button
+                          className="workspaceActionBtn"
+                          onClick={() => window.open(mobileInstallUrl, "_blank", "noopener,noreferrer")}
+                        >
+                          Open install link
+                        </button>
+                        <button
+                          className="workspaceActionBtn"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(mobileInstallUrl);
+                              window.alert("Install link copied.");
+                            } catch {
+                              window.alert("Could not copy automatically. Open link and copy from browser.");
+                            }
+                          }}
+                        >
+                          Copy install link
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </>
               ) : null}
             </aside>
@@ -2549,6 +2602,22 @@ export default function App() {
                         Logout
                       </button>
                     </div>
+                    {mobileInstallUrl ? (
+                      <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                        <div className="workspaceSectionLabel">Mobile install</div>
+                        <img
+                          src={mobileInstallQrUrl}
+                          alt="Install PatientFinder mobile app"
+                          style={{ width: 150, height: 150, borderRadius: 10, background: "#fff", padding: 8, justifySelf: "center" }}
+                        />
+                        <button
+                          className="workspaceActionBtn"
+                          onClick={() => window.open(mobileInstallUrl, "_blank", "noopener,noreferrer")}
+                        >
+                          Open install link
+                        </button>
+                      </div>
+                    ) : null}
                   </section>
                 ) : null}
 
@@ -3936,9 +4005,12 @@ function PatientPage({
   canHighlightPatient: boolean;
   onHighlightPatient: () => void;
 }) {
-  const [tab, setTab] = useState<"overview" | "intake" | "snap" | "health" | "consents" | "attendance">("overview");
+  const [tab, setTab] = useState<"overview" | "documents" | "intake" | "snap" | "health" | "consents" | "attendance">("overview");
   const [sub, setSub] = useState<IntakeSubmission | null>(null);
   const [subLoading, setSubLoading] = useState(true);
+  const [documents, setDocuments] = useState<PatientDocumentSummary[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [downloadingDocumentId, setDownloadingDocumentId] = useState<string | null>(null);
   const [statusChanging, setStatusChanging] = useState(false);
   const [programSaving, setProgramSaving] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
@@ -3958,6 +4030,26 @@ function PatientPage({
         if (cancelled) return;
         setSub(null);
         setSubLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataClient, patient.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDocumentsLoading(true);
+    dataClient
+      .getPatientDocuments(patient.id)
+      .then((rows) => {
+        if (cancelled) return;
+        setDocuments(rows);
+        setDocumentsLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDocuments([]);
+        setDocumentsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -4037,6 +4129,26 @@ function PatientPage({
     setSub(data as IntakeSubmission);
   };
 
+  const openPatientDocument = async (document: PatientDocumentSummary) => {
+    setDownloadingDocumentId(document.id);
+    try {
+      const blob = await dataClient.downloadPatientDocument(document.id);
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } finally {
+      setDownloadingDocumentId(null);
+    }
+  };
+
+  const formatDocumentSize = (value: number | string) => {
+    const n = typeof value === "string" ? Number(value) : value;
+    if (!Number.isFinite(n) || n <= 0) return "—";
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   return (
     <div className="patientWrap">
       <div className="panel" style={{ maxWidth: 1120, margin: "0 auto" }}>
@@ -4083,9 +4195,9 @@ function PatientPage({
           </div>
 
           <div className="tabs">
-            {(["overview", "intake", "snap", "health", "consents", "attendance"] as const).map((t) => (
+            {(["overview", "documents", "intake", "snap", "health", "consents", "attendance"] as const).map((t) => (
               <button key={t} className={tab === t ? "tabBtn on" : "tabBtn"} onClick={() => setTab(t)}>
-                {t === "attendance" ? "Visits & tests" : t.charAt(0).toUpperCase() + t.slice(1)}
+                {t === "attendance" ? "Visits & tests" : t === "documents" ? "Documents" : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
           </div>
@@ -4338,6 +4450,45 @@ function PatientPage({
                 </div>
               </div>
             </>
+          ) : null}
+
+          {tab === "documents" ? (
+            <div className="section">
+              <div className="sectionTitle">Patient Documents</div>
+              <div className="hintTiny">Documents uploaded from the scanner app are stored in Azure Blob and listed here.</div>
+              {documentsLoading ? (
+                <div className="hintTiny">Loading documents…</div>
+              ) : (
+                <div className="table" style={{ marginTop: 12 }}>
+                  <div className="thead" style={{ gridTemplateColumns: "1.5fr 1fr 0.8fr 1.1fr 0.8fr" }}>
+                    <div>Filename</div>
+                    <div>Type</div>
+                    <div>Size</div>
+                    <div>Uploaded</div>
+                    <div>Action</div>
+                  </div>
+                  {documents.map((doc) => (
+                    <div key={doc.id} className="trow" style={{ gridTemplateColumns: "1.5fr 1fr 0.8fr 1.1fr 0.8fr" }}>
+                      <div className="strong">{doc.original_filename}</div>
+                      <div>{doc.document_type}</div>
+                      <div>{formatDocumentSize(doc.byte_size)}</div>
+                      <div>{fmt(doc.created_at)}</div>
+                      <div>
+                        <button
+                          className="btn ghost"
+                          style={{ padding: "6px 10px", fontSize: 12 }}
+                          disabled={downloadingDocumentId === doc.id}
+                          onClick={() => void openPatientDocument(doc)}
+                        >
+                          {downloadingDocumentId === doc.id ? "Opening…" : "Open"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {!documents.length ? <div className="empty">No documents uploaded for this patient yet.</div> : null}
+                </div>
+              )}
+            </div>
           ) : null}
 
           {tab === "attendance" ? (
