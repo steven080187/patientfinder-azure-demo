@@ -9,7 +9,9 @@ import type { PatientDocumentRow } from "../types.js";
 export const patientDocumentsRouter = Router();
 
 const uploadSchema = z.object({
-  patientId: z.string().uuid(),
+  // Demo/sandbox datasets use deterministic IDs that are not RFC UUIDs.
+  // Accept any non-empty identifier and validate existence in DB below.
+  patientId: z.string().min(1).max(128),
   documentType: z.string().min(1).max(100),
   fileName: z.string().min(1).max(255).optional(),
   pdfBase64: z.string().min(1),
