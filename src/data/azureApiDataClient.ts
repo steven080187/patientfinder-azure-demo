@@ -166,6 +166,7 @@ export const azureApiDataClient: DataClient = {
     const qs = new URLSearchParams();
     if (params.q?.trim()) qs.set("q", params.q.trim());
     if (params.status) qs.set("status", params.status);
+    if (params.pastTier) qs.set("past_tier", params.pastTier);
     if (params.assignedToUserId) qs.set("assigned_to_user_id", params.assignedToUserId);
     if (params.assignedToEmail) qs.set("assigned_to_email", params.assignedToEmail);
     if (params.sortKey) qs.set("sort_key", params.sortKey);

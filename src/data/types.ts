@@ -87,6 +87,7 @@ export interface DataClient {
   getPatientsPage(params: {
     q?: string;
     status?: "new" | "active" | "past";
+    pastTier?: "recent" | "archived";
     assignedToUserId?: string;
     assignedToEmail?: string;
     sortKey?: "name" | "intake" | "lastVisit" | "kind";

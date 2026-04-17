@@ -21,6 +21,7 @@ import "./App.css";
 /* -------------------- Types -------------------- */
 
 type PatientKind = "New Enrollee" | "Active Patient" | "Past Patient";
+type PatientKindFilter = "all" | PatientKind | "Past Recent" | "Past Archived";
 type ViewMode = "sheet" | "cards" | "split";
 type SortKey = "name" | "intake" | "lastVisit" | "kind";
 type WorkspaceTab = "roster" | "attention";
@@ -321,6 +322,20 @@ function sortVal(p: Patient, key: SortKey) {
     case "kind":
       return p.kind;
   }
+}
+
+function isPastRecentPatient(patient: Patient, nowIso: string) {
+  const reference = toDateOnly(patient.lastVisitDate ?? patient.intakeDate);
+  if (!reference) return false;
+  const daysSince = dayDiff(reference, nowIso);
+  return daysSince <= 90;
+}
+
+function matchesKindFilter(patient: Patient, filter: PatientKindFilter, nowIso: string) {
+  if (filter === "all") return true;
+  if (filter === "Past Recent") return patient.kind === "Past Patient" && isPastRecentPatient(patient, nowIso);
+  if (filter === "Past Archived") return patient.kind === "Past Patient" && !isPastRecentPatient(patient, nowIso);
+  return patient.kind === filter;
 }
 
 function fieldKey(screenId: string, placeholder: string) {
@@ -1239,7 +1254,7 @@ export default function App() {
   const [view, setView] = useState<ViewMode>("sheet");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [kindFilter, setKindFilter] = useState<"all" | PatientKind>("all");
+  const [kindFilter, setKindFilter] = useState<PatientKindFilter>("all");
   const [dashboardFilter, setDashboardFilter] = useState<DashboardFilterKey | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("roster");
   const dataClient = getDataClient();
@@ -1383,12 +1398,17 @@ export default function App() {
         "Active Patient": "active",
         "Past Patient": "past",
       };
+      const patientStatus = kindFilter === "all" || kindFilter === "Past Recent" || kindFilter === "Past Archived"
+        ? undefined
+        : statusMap[kindFilter];
+      const pastTier = kindFilter === "Past Recent" ? "recent" : kindFilter === "Past Archived" ? "archived" : undefined;
       const shouldHideUnscopedRoster = !forceRoster && !caseLoadOnly && !qRaw;
       const patientsPagePromise = shouldHideUnscopedRoster
         ? Promise.resolve({ patients: [], total: 0, limit: patientPageSize, offset: patientPage * patientPageSize })
         : dataClient.getPatientsPage({
             q: qRaw || undefined,
-            status: kindFilter === "all" ? undefined : statusMap[kindFilter],
+            status: patientStatus,
+            pastTier,
             assignedToUserId: caseLoadOnly ? counselorId : undefined,
             assignedToEmail: caseLoadOnly ? activeUserEmail.toLowerCase() : undefined,
             sortKey,
@@ -1566,7 +1586,7 @@ export default function App() {
   const results = useMemo(() => {
     let rows = indexed;
 
-    if (kindFilter !== "all") rows = rows.filter(({ p }) => p.kind === kindFilter);
+    if (kindFilter !== "all") rows = rows.filter(({ p }) => matchesKindFilter(p, kindFilter, currentWeek));
     if (caseLoadOnly) rows = rows.filter(({ p }) => caseAssignments[p.id] === counselorId);
 
     if (qRaw) {
@@ -2684,11 +2704,13 @@ export default function App() {
                             </div>
                           )}
 
-                          <select className="select" value={kindFilter} onChange={(e) => setKindFilter(e.target.value as "all" | PatientKind)}>
+                          <select className="select" value={kindFilter} onChange={(e) => setKindFilter(e.target.value as PatientKindFilter)}>
                             <option value="all">All statuses</option>
                             <option value="New Enrollee">New enrollees</option>
                             <option value="Active Patient">Active patients</option>
                             <option value="Past Patient">Past patients</option>
+                            <option value="Past Recent">Past (0-90 days)</option>
+                            <option value="Past Archived">Past (90+ days)</option>
                           </select>
 
                           <select className="select" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>

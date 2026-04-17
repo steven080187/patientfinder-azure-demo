@@ -12,6 +12,7 @@ patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counse
     const statusParam = String(req.query.status ?? "").trim().toLowerCase();
     const sortKeyParam = String(req.query.sort_key ?? "name").trim().toLowerCase();
     const sortDirParam = String(req.query.sort_dir ?? "asc").trim().toLowerCase();
+    const pastTierParam = String(req.query.past_tier ?? "").trim().toLowerCase();
     const assignedToUserId = String(req.query.assigned_to_user_id ?? "").trim().toLowerCase();
     const assignedToEmail = String(req.query.assigned_to_email ?? "").trim().toLowerCase();
     const offset = Math.max(0, Number.parseInt(String(req.query.offset ?? "0"), 10) || 0);
@@ -54,6 +55,14 @@ patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counse
     if (statusFilter) {
       params.push(statusFilter);
       whereParts.push(`p.status = $${params.length}`);
+    }
+
+    if (pastTierParam === "recent" || pastTierParam === "archived") {
+      whereParts.push(`lower(coalesce(p.status, '')) in ('past', 'past patient', 'inactive')`);
+      const comparison = pastTierParam === "recent" ? ">=" : "<";
+      whereParts.push(
+        `coalesce(p.last_visit_date, p.updated_at::date, p.intake_date, p.created_at::date) ${comparison} (timezone('utc', now())::date - interval '90 days')::date`
+      );
     }
 
     if (assignedToUserId || assignedToEmail) {
