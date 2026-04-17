@@ -63,19 +63,15 @@ jobs:
 
       - name: Deploy to Azure Web App (ZipDeploy)
         env:
-          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          DEPLOY_USER: ${{ secrets.AZURE_WEBAPP_DEPLOY_USER }}
+          DEPLOY_PASS: ${{ secrets.AZURE_WEBAPP_DEPLOY_PASS }}
           KUDU_URL: https://pfsbx-front-0412346.scm.azurewebsites.net
         run: |
           set -euo pipefail
-          printf '%s' "$PUBLISH_PROFILE" > publish-profile.xml
-
-          USERNAME="$(sed -n 's/.*publishMethod=\"ZipDeploy\"[^>]*userName=\"\([^\"]*\)\".*/\1/p' publish-profile.xml | head -n1)"
-          PASSWORD="$(sed -n 's/.*publishMethod=\"ZipDeploy\"[^>]*userPWD=\"\([^\"]*\)\".*/\1/p' publish-profile.xml | head -n1)"
-
-          if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
-            echo "Could not parse ZipDeploy credentials from publish profile."
+          if [ -z "${DEPLOY_USER:-}" ] || [ -z "${DEPLOY_PASS:-}" ]; then
+            echo "Deploy credentials are missing."
             exit 1
           fi
 
           zip -qr deploy.zip .
-          curl -fsS -u "$USERNAME:$PASSWORD" --data-binary @deploy.zip "$KUDU_URL/api/zipdeploy"
+          curl -fsS -u "$DEPLOY_USER:$DEPLOY_PASS" --data-binary @deploy.zip "$KUDU_URL/api/zipdeploy"
