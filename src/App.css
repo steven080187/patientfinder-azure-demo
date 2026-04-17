@@ -1447,7 +1447,7 @@
 
 .workspaceSheetHead,
 .workspaceSheetRow {
-  min-width: 2140px;
+  min-width: 2260px;
   display: grid;
   grid-template-columns:
     100px
@@ -1466,6 +1466,7 @@
     140px
     90px
     110px
+    120px
     120px
     minmax(240px, 1fr);
   gap: 10px;
