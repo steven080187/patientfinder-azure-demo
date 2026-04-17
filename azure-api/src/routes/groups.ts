@@ -207,21 +207,24 @@ function getFieldMapFromTemplate(templateDoc: PdfLibDocument) {
   return map;
 }
 
-function formatTemplateDate(value: string) {
-  const d = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return value;
+function formatTemplateDate(value: string | Date | null | undefined) {
+  if (!value) return "";
+  const raw = value instanceof Date ? value.toISOString().slice(0, 10) : String(value).trim();
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00`) : new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   const yyyy = String(d.getFullYear());
   return `${mm}/${dd}/${yyyy}`;
 }
 
-function formatTemplateTime(value: string | null) {
+function formatTemplateTime(value: string | Date | null | undefined) {
   if (!value) return "";
-  const [hoursRaw, minutesRaw] = value.split(":");
+  const raw = value instanceof Date ? value.toISOString().slice(11, 16) : String(value).trim();
+  const [hoursRaw, minutesRaw] = raw.split(":");
   const hours = Number(hoursRaw);
   const minutes = Number(minutesRaw);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value.replace(/\s+/g, "").toLowerCase();
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return raw;
   const suffix = hours >= 12 ? "pm" : "am";
   const hours12 = hours % 12 || 12;
   return `${hours12}:${String(minutes).padStart(2, "0")}${suffix}`;
