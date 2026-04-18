@@ -1325,6 +1325,7 @@ export default function App() {
   const hasCounselorRole = activeAuthUser?.roles.includes("Counselor") ?? false;
   const hasAdminRole = activeAuthUser?.roles.includes("Admin") ?? false;
   const hasIntakeRole = activeAuthUser?.roles.includes("Intake") ?? false;
+  const hasKnownWorkspaceRole = hasCounselorRole || hasAdminRole || hasIntakeRole;
 
   useEffect(() => {
     setAzureApiAccessTokenProvider(async () => activeAccessToken);
@@ -1341,9 +1342,16 @@ export default function App() {
   }, [activeAccessToken, azureDemoSession]);
 
   useEffect(() => {
+    if (!activeAuthUser) return;
+    if (!hasKnownWorkspaceRole) {
+      // Fallback for missing/partial role claims: keep roster visible instead of blanking the workspace.
+      setForceRoster(true);
+      setCaseLoadOnly(false);
+      return;
+    }
     setForceRoster(hasAdminRole || hasIntakeRole);
     setCaseLoadOnly(hasCounselorRole && !hasAdminRole && !hasIntakeRole);
-  }, [hasAdminRole, hasCounselorRole, hasIntakeRole]);
+  }, [activeAuthUser, hasAdminRole, hasCounselorRole, hasIntakeRole, hasKnownWorkspaceRole]);
 
 
   useEffect(() => {

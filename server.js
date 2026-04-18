@@ -9,7 +9,11 @@ const distDir = path.join(__dirname, "dist");
 
 app.use(express.static(distDir, { index: false }));
 
-app.get("/*splat", (_req, res) => {
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(distDir, "index.html"));
+});
+
+app.get("/{*splat}", (_req, res) => {
   res.sendFile(path.join(distDir, "index.html"));
 });
 
