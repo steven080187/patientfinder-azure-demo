@@ -241,6 +241,10 @@ function toDateOnly(value: unknown) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function normalizePatientId(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
 function fmt(iso?: string) {
   if (!iso) return "—";
   const normalized = toDateOnly(iso);
@@ -898,7 +902,7 @@ function mergePatientWithExtras(row: any, extras: PatientExtras | undefined, ros
     : normalizedKind;
 
   return {
-    id: row.id,
+    id: normalizePatientId(row.id),
     displayName: row.full_name || "Unknown",
     mrn: row.mrn,
     kind,
@@ -932,8 +936,9 @@ function buildSessions(sessionRows: any[], attendeeRows: any[]): Session[] {
   (attendeeRows ?? []).forEach((row: any) => {
     const session = byId.get(row.session_id);
     if (!session) return;
-    session.patientIds.push(row.patient_id);
-    session.attendance[row.patient_id] = row.status;
+    const patientId = normalizePatientId(row.patient_id);
+    session.patientIds.push(patientId);
+    session.attendance[patientId] = row.status;
   });
 
   return [...byId.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -1233,13 +1238,18 @@ export default function App() {
     }
   });
   const [authMode, setAuthMode] = useState<AuthMode>("demo");
+  const [authOptionsError, setAuthOptionsError] = useState<string | null>(null);
   const [azureDemoUsers, setAzureDemoUsers] = useState<AzureDemoUser[]>([]);
   const [route, setRoute] = useState<AuthedRoute>({ name: "home" });
   const [loadingPatients, setLoadingPatients] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [jsonImporting, setJsonImporting] = useState(false);
 
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientDetail, setPatientDetail] = useState<Patient | null>(null);
+  const [patientDetailLoading, setPatientDetailLoading] = useState(false);
+  const [patientDetailError, setPatientDetailError] = useState<string | null>(null);
   const [caseAssignments, setCaseAssignments] = useState<Record<string, string>>({});
   const [caseAssignmentEmails, setCaseAssignmentEmails] = useState<Record<string, string>>({});
   const [complianceByPatient, setComplianceByPatient] = useState<Record<string, PatientCompliance>>({});
@@ -1285,6 +1295,10 @@ export default function App() {
 
   const [forceRoster, setForceRoster] = useState(false);
   const [caseLoadOnly, setCaseLoadOnly] = useState(true);
+  const debugPatientFlow =
+    String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "1" ||
+    String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "true" ||
+    import.meta.env.DEV;
 
   useEffect(() => {
     setPatientPage(0);
@@ -1295,14 +1309,16 @@ export default function App() {
     void getAzureAuthOptions()
       .then((payload) => {
         if (!cancelled) {
+          setAuthOptionsError(null);
           setAuthMode(payload.authMode ?? "demo");
           setAzureDemoUsers(payload.authMode === "demo" ? (payload.demoUsers ?? []) : []);
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
           setAuthMode("demo");
           setAzureDemoUsers([]);
+          setAuthOptionsError(getRequestErrorMessage(error, "Unable to resolve auth mode from Azure API."));
         }
       });
     return () => {
@@ -1326,6 +1342,9 @@ export default function App() {
   const hasAdminRole = activeAuthUser?.roles.includes("Admin") ?? false;
   const hasIntakeRole = activeAuthUser?.roles.includes("Intake") ?? false;
   const hasKnownWorkspaceRole = hasCounselorRole || hasAdminRole || hasIntakeRole;
+  const authReadyForApi = isEntraMode
+    ? Boolean(activeAuthUser && activeAccessToken && !azureAuth.loading)
+    : Boolean(activeAuthUser && activeAccessToken);
 
   useEffect(() => {
     setAzureApiAccessTokenProvider(async () => activeAccessToken);
@@ -1336,9 +1355,6 @@ export default function App() {
         window.localStorage.removeItem(azureDemoSessionKey);
       }
     }
-    return () => {
-      setAzureApiAccessTokenProvider(null);
-    };
   }, [activeAccessToken, azureDemoSession]);
 
   useEffect(() => {
@@ -1406,16 +1422,26 @@ export default function App() {
   const mobileInstallUrl = mobileInstallBaseUrl
     ? `${mobileInstallBaseUrl}${mobileInstallBaseUrl.includes("?") ? "&" : "?"}invite=${encodeURIComponent(mobileInstallCode)}`
     : "";
-  const mobileInstallQrTarget = expoGoUrl || mobileInstallUrl;
-  const mobileInstallQrUrl = mobileInstallQrTarget
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileInstallQrTarget)}`
-    : "";
+  const iosInstallTarget = expoGoUrl || mobileInstallUrl;
   const expoGoInfoUrl = "https://expo.dev/go";
   const counselorId = activeUserId;
   const counselorLabel = activeUserEmail?.split("@")[0] ?? "My";
 
   const loadDashboardData = useEffectEvent(async () => {
+    if (!authReadyForApi) {
+      if (debugPatientFlow) {
+        console.info("[patient-flow][frontend][dashboard-skip]", {
+          reason: "auth_not_ready",
+          isEntraMode,
+          hasAuthUser: Boolean(activeAuthUser),
+          hasAccessToken: Boolean(activeAccessToken),
+          azureAuthLoading: azureAuth.loading,
+        });
+      }
+      return;
+    }
     setLoadingPatients(true);
+    setLoadError(null);
 
     let patientsRows: any[] = [];
     let totalPatientsRows = 0;
@@ -1456,6 +1482,17 @@ export default function App() {
             offset: patientPage * patientPageSize,
           });
 
+      if (debugPatientFlow) {
+        console.info("[patient-flow][frontend][dashboard-load-start]", {
+          isEntraMode,
+          hasAccessToken: Boolean(activeAccessToken),
+          qRaw,
+          kindFilter,
+          patientPage,
+          patientPageSize,
+          dataSource: "azure-api -> postgresql",
+        });
+      }
       const [dashboard, groups, patientsPage] = await Promise.all([
         dataClient.getDashboard({ includePatients: false }),
         dataClient.getGroupSessions(),
@@ -1463,6 +1500,13 @@ export default function App() {
       ]);
       patientsRows = (patientsPage.patients as any[]) ?? [];
       totalPatientsRows = Number(patientsPage.total ?? 0);
+      if (debugPatientFlow) {
+        console.info("[patient-flow][frontend][dashboard-load-success]", {
+          patientsCount: patientsRows.length,
+          totalPatientsRows,
+          groupsCount: (groups ?? []).length,
+        });
+      }
       assignmentsRows = (dashboard.assignments as any[]) ?? [];
       complianceRows = (dashboard.compliance as any[]) ?? [];
       drugTestsRows = (dashboard.drugTests as any[]) ?? [];
@@ -1474,6 +1518,16 @@ export default function App() {
       groupRows = groups;
     } catch (error) {
       console.error("Error fetching Azure API dashboard:", error);
+      const errorMessage = getRequestErrorMessage(error, "Unable to load patient roster.");
+      const authFailure = /401|sign-in is required|could not be verified|unauthorized/i.test(errorMessage);
+      if (!isEntraMode && authFailure) {
+        // Demo token expired/invalid: force a clean re-login instead of leaving a blank roster shell.
+        setAzureDemoSession(null);
+        setPatients([]);
+        setCaseAssignments({});
+        setCaseAssignmentEmails({});
+      }
+      setLoadError(getRequestErrorMessage(error, "Unable to load patient roster."));
       setLoadingPatients(false);
       return;
     }
@@ -1482,10 +1536,11 @@ export default function App() {
     const nextAssignmentEmails: Record<string, string> = {};
     const nextTeammateEmails = new Set<string>();
     assignmentsRows.forEach((row: any) => {
-      nextAssignments[row.patient_id] = String(row.counselor_user_id ?? row.counselor_email ?? "").toLowerCase();
+      const patientId = normalizePatientId(row.patient_id);
+      nextAssignments[patientId] = String(row.counselor_user_id ?? row.counselor_email ?? "").toLowerCase();
       if (row.counselor_email) {
         const counselorEmail = String(row.counselor_email).toLowerCase();
-        nextAssignmentEmails[row.patient_id] = counselorEmail;
+        nextAssignmentEmails[patientId] = counselorEmail;
         nextTeammateEmails.add(counselorEmail);
       }
     });
@@ -1493,7 +1548,7 @@ export default function App() {
 
     const nextCompliance: Record<string, PatientCompliance> = {};
     complianceRows.forEach((row: any) => {
-      nextCompliance[row.patient_id] = {
+      nextCompliance[normalizePatientId(row.patient_id)] = {
         drugTestMode: row.drug_test_mode ?? "none",
         drugTestsPerWeek: row.drug_tests_per_week ?? undefined,
         drugTestWeekday: row.drug_test_weekday != null ? String(row.drug_test_weekday) : undefined,
@@ -1507,8 +1562,9 @@ export default function App() {
 
     const nextExtras: Record<string, PatientExtras> = {};
     drugTestsRows.forEach((row: any) => {
-      if (!nextExtras[row.patient_id]) nextExtras[row.patient_id] = { drugTests: [] };
-      nextExtras[row.patient_id].drugTests!.push({
+      const patientId = normalizePatientId(row.patient_id);
+      if (!nextExtras[patientId]) nextExtras[patientId] = { drugTests: [] };
+      nextExtras[patientId].drugTests!.push({
         id: row.id,
         date: row.date,
         testType: row.test_type,
@@ -1520,7 +1576,7 @@ export default function App() {
 
     const nextRosterDetails: Record<string, PatientRosterDetails> = {};
     rosterRows.forEach((row: any) => {
-      nextRosterDetails[row.patient_id] = {
+      nextRosterDetails[normalizePatientId(row.patient_id)] = {
         drugOfChoice: Array.isArray(row.drug_of_choice) ? row.drug_of_choice : undefined,
         medicalPhysApt: row.medical_phys_apt ?? undefined,
         medFormStatus: row.med_form_status ?? undefined,
@@ -1538,10 +1594,19 @@ export default function App() {
     setTeammateEmails([...nextTeammateEmails].sort());
     setComplianceByPatient(nextCompliance);
     setPatientTotal(totalPatientsRows);
-    setPatients(patientsRows.map((row) => mergePatientWithExtras(row, nextExtras[row.id], nextRosterDetails[row.id])));
+    setPatients(
+      patientsRows.map((row) => {
+        const normalizedId = normalizePatientId(row.id);
+        return mergePatientWithExtras(
+          { ...row, id: normalizedId },
+          nextExtras[normalizedId] ?? nextExtras[row.id],
+          nextRosterDetails[normalizedId] ?? nextRosterDetails[row.id]
+        );
+      })
+    );
     // If a counselor has no active assignments yet, default to full roster instead of an empty case-load view.
     if ((activeAuthUser?.roles.includes("Counselor") ?? false) && !(activeAuthUser?.roles.includes("Admin") ?? false)) {
-      const assignedCount = patientsRows.filter((row: any) => nextAssignments[row.id] === counselorId).length;
+      const assignedCount = patientsRows.filter((row: any) => nextAssignments[normalizePatientId(row.id)] === counselorId).length;
       if (assignedCount === 0 && patientsRows.length > 0) {
         setForceRoster(true);
         setCaseLoadOnly(false);
@@ -1595,11 +1660,12 @@ export default function App() {
       setLiveGroupError(null);
       setLiveGroupSuccess(null);
       setLiveGroupBusy(false);
+      setLoadError(null);
       return;
     }
 
     void loadDashboardData();
-  }, [activeAuthUser, patientPage, qRaw, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, loadDashboardData]);
+  }, [activeAuthUser, authReadyForApi, patientPage, qRaw, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, loadDashboardData]);
 
 
   const [theme, setThemeState] = useState<ThemeId>(() => {
@@ -1785,7 +1851,7 @@ export default function App() {
     if (!selectedId || !results.some((p) => p.id === selectedId)) setSelectedId(results[0].id);
   }, [results, selectedId]);
 
-  const openPatient = (id: string) => setRoute({ name: "patient", patientId: id });
+  const openPatient = (id: string) => setRoute({ name: "patient", patientId: normalizePatientId(id) });
 
   const openGroupPdf = async (groupSessionId: string) => {
     setOpeningGroupId(groupSessionId);
@@ -1937,6 +2003,108 @@ export default function App() {
   const refreshPatients = async () => {
     await loadDashboardData();
   };
+
+  useEffect(() => {
+    if (route.name !== "patient") {
+      setPatientDetail(null);
+      setPatientDetailError(null);
+      setPatientDetailLoading(false);
+      return;
+    }
+
+    const routePatientId = normalizePatientId(route.patientId);
+    if (!routePatientId) {
+      setPatientDetail(null);
+      setPatientDetailError("Missing patient id.");
+      return;
+    }
+
+    if (!authReadyForApi) {
+      if (debugPatientFlow) {
+        console.info("[patient-flow][frontend][patient-detail-skip]", {
+          reason: "auth_not_ready",
+          routePatientId,
+          hasAccessToken: Boolean(activeAccessToken),
+          hasAuthUser: Boolean(activeAuthUser),
+        });
+      }
+      return;
+    }
+
+    const inList = patients.find((entry) => normalizePatientId(entry.id) === routePatientId);
+    if (inList) {
+      setPatientDetail(inList);
+      setPatientDetailError(null);
+      setPatientDetailLoading(false);
+      if (debugPatientFlow) {
+        console.info("[patient-flow][frontend][patient-detail]", {
+          routePatientId,
+          selectedPatientFound: true,
+          source: "loaded-patient-list",
+        });
+      }
+      return;
+    }
+
+    let cancelled = false;
+    setPatientDetailLoading(true);
+    setPatientDetailError(null);
+    if (debugPatientFlow) {
+      console.info("[patient-flow][frontend][patient-detail-load-start]", {
+        routePatientId,
+        source: "api",
+      });
+    }
+    void dataClient
+      .getPatient(routePatientId)
+      .then((row: any) => {
+        if (cancelled) return;
+        if (!row) {
+          setPatientDetail(null);
+          setPatientDetailError("Patient not found.");
+          if (debugPatientFlow) {
+            console.info("[patient-flow][frontend][patient-detail-load-finish]", {
+              routePatientId,
+              selectedPatientFound: false,
+            });
+          }
+          return;
+        }
+        const normalizedRowId = normalizePatientId(row.id);
+        const found = mergePatientWithExtras(row, undefined, undefined);
+        setPatientDetail({ ...found, id: normalizedRowId });
+        setPatientDetailError(null);
+        if (debugPatientFlow) {
+          console.info("[patient-flow][frontend][patient-detail-load-finish]", {
+            routePatientId,
+            selectedPatientFound: true,
+            selectedPatientId: normalizedRowId,
+          });
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setPatientDetail(null);
+        setPatientDetailError(getRequestErrorMessage(error, "Unable to load patient detail."));
+        console.error("Error fetching patient detail:", error);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setPatientDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    route,
+    patients,
+    authReadyForApi,
+    activeAccessToken,
+    activeAuthUser,
+    dataClient,
+    debugPatientFlow,
+  ]);
 
   const toggleCaseAssignment = async (patientId: string) => {
     if (caseAssignments[patientId] === counselorId) {
@@ -2287,6 +2455,7 @@ export default function App() {
       return (
         <div className="page authPage">
           <EntraLoginScreen loading={azureAuth.loading} onLogin={azureAuth.login} />
+          {authOptionsError ? <div className="authErr">{authOptionsError}</div> : null}
         </div>
       );
     }
@@ -2295,6 +2464,7 @@ export default function App() {
         <AzureDemoLoginScreen
           demoUsers={azureDemoUsers}
           onLoggedIn={setAzureDemoSession}
+          bootstrapError={authOptionsError}
         />
       </div>
     );
@@ -2398,11 +2568,6 @@ export default function App() {
                     <div className="workspaceSidebarSection">
                       <div className="workspaceSectionLabel">Mobile install</div>
                       <div style={{ display: "grid", gap: 10 }}>
-                        <img
-                          src={mobileInstallQrUrl}
-                          alt="Open PatientFinder mobile app in Expo Go"
-                          style={{ width: 150, height: 150, borderRadius: 10, background: "#fff", padding: 8 }}
-                        />
                         <div style={{ fontSize: 12, opacity: 0.85 }}>
                           iPhone uses Expo Go (free) and does not require an Apple Developer account.
                         </div>
@@ -2421,7 +2586,7 @@ export default function App() {
                               window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
                             }
                             window.alert(
-                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go and scan this QR code.\n3) If scan fails, paste this link in Expo Go:\n${mobileInstallQrTarget}`,
+                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go.\n3) Paste this link in Expo Go:\n${iosInstallTarget}`,
                             );
                           }}
                         >
@@ -2631,11 +2796,6 @@ export default function App() {
                     {mobileInstallUrl ? (
                       <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
                         <div className="workspaceSectionLabel">Mobile install</div>
-                        <img
-                          src={mobileInstallQrUrl}
-                          alt="Open PatientFinder mobile app in Expo Go"
-                          style={{ width: 150, height: 150, borderRadius: 10, background: "#fff", padding: 8, justifySelf: "center" }}
-                        />
                         <div style={{ fontSize: 12, opacity: 0.85 }}>
                           iPhone is Expo Go only (free).
                         </div>
@@ -2654,7 +2814,7 @@ export default function App() {
                               window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
                             }
                             window.alert(
-                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go and scan this QR code.\n3) If scan fails, paste this link in Expo Go:\n${mobileInstallQrTarget}`,
+                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go.\n3) Paste this link in Expo Go:\n${iosInstallTarget}`,
                             );
                           }}
                         >
@@ -2969,7 +3129,10 @@ export default function App() {
                   </section>
                 )}
 
-                <div className="homeFooter">{loadingPatients ? "Loading patients from database..." : ""}</div>
+                <div className="homeFooter">
+                  {loadingPatients ? "Loading patients from database..." : ""}
+                  {!loadingPatients && loadError ? ` ${loadError}` : ""}
+                </div>
               </>
             )}
           </main>
@@ -3126,7 +3289,11 @@ export default function App() {
 
   /* ---------- PATIENT PAGE ---------- */
   if (route.name === "patient") {
-    const p = patients.find((x) => x.id === route.patientId);
+    const normalizedRoutePatientId = normalizePatientId(route.patientId);
+    const p =
+      patientDetail && normalizePatientId(patientDetail.id) === normalizedRoutePatientId
+        ? patientDetail
+        : patients.find((x) => normalizePatientId(x.id) === normalizedRoutePatientId);
 
     return (
       <div className="page">
@@ -3156,7 +3323,12 @@ export default function App() {
           </button>
         </div>
 
-        {p ? (
+        {patientDetailLoading ? (
+          <div className="panel">
+            <div className="panelHead">Loading patient</div>
+            <div className="panelBody">Fetching patient details from Azure API...</div>
+          </div>
+        ) : p ? (
           <PatientPage
             patient={p}
             allSessions={sessions}
@@ -3169,9 +3341,11 @@ export default function App() {
             onUpdateRosterDetails={(patch) => updateRosterDetails(p.id, patch)}
             onUpdatePatient={(next) => {
               setPatients((prev) => prev.map((x) => (x.id === next.id ? next : x)));
+              setPatientDetail((current) => (current && current.id === next.id ? next : current));
             }}
             onDeletePatient={() => {
               setPatients((prev) => prev.filter((x) => x.id !== p.id));
+              setPatientDetail(null);
               setRoute({ name: "home" });
             }}
             canHighlightPatient={hasAdminRole}
@@ -3180,7 +3354,9 @@ export default function App() {
         ) : (
           <div className="panel">
             <div className="panelHead">Not found</div>
-            <div className="panelBody">That patient record doesn't exist in mock data.</div>
+            <div className="panelBody">
+              {patientDetailError ?? "That patient record was not found in Azure-backed patient data."}
+            </div>
           </div>
         )}
         <ThemePicker theme={theme} setTheme={applyTheme} />
@@ -5658,9 +5834,11 @@ function SignaturePadModal({
 function AzureDemoLoginScreen({
   demoUsers,
   onLoggedIn,
+  bootstrapError,
 }: {
   demoUsers: AzureDemoUser[];
   onLoggedIn: (session: AzureDemoSession) => void;
+  bootstrapError?: string | null;
 }) {
   const [email, setEmail] = useState(demoUsers[0]?.email ?? "");
   const [password, setPassword] = useState("Demo123!");
@@ -5741,6 +5919,7 @@ function AzureDemoLoginScreen({
       </div>
 
       {err ? <div className="authErr">{err}</div> : null}
+      {bootstrapError ? <div className="authErr">{bootstrapError}</div> : null}
     </div>
   );
 }

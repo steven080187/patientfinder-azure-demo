@@ -6,8 +6,27 @@ import type { IntakeSubmissionRow, PatientRow } from "../types.js";
 
 export const patientsRouter = Router();
 
+function normalizePatientId(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function logPatientFlow(event: string, details: Record<string, unknown>) {
+  console.info(`[patient-flow][api][${event}]`, {
+    dataSource: "postgresql",
+    ...details,
+  });
+}
+
 patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
   try {
+    const requestStartedAt = Date.now();
+    const requestUrl = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+    logPatientFlow("patients-list-request", {
+      requestUrl,
+      hasAuthToken: Boolean(req.headers.authorization),
+      requester: getRequestUser(req)?.email ?? "unknown",
+    });
+
     const q = String(req.query.q ?? "").trim();
     const statusParam = String(req.query.status ?? "").trim().toLowerCase();
     const sortKeyParam = String(req.query.sort_key ?? "name").trim().toLowerCase();
@@ -114,6 +133,13 @@ patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counse
       dataParams
     );
 
+    logPatientFlow("patients-list-response", {
+      requestUrl,
+      status: 200,
+      count: rows.length,
+      total,
+      durationMs: Date.now() - requestStartedAt,
+    });
     res.json({ ok: true, patients: rows, total, limit, offset });
   } catch (error) {
     next(error);
@@ -122,18 +148,42 @@ patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counse
 
 patientsRouter.get("/api/patients/:id", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
   try {
+    const requestStartedAt = Date.now();
+    const requestUrl = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+    const patientId = normalizePatientId(req.params.id);
+    logPatientFlow("patient-detail-request", {
+      requestUrl,
+      patientId,
+      hasAuthToken: Boolean(req.headers.authorization),
+      requester: getRequestUser(req)?.email ?? "unknown",
+    });
+
     const rows = await query<PatientRow>(
       `select id, full_name, mrn, external_id, status, location, intake_date, last_visit_date, next_appt_date,
               primary_program, counselor_name, flags, created_at, updated_at
          from public.patients
         where id = $1`,
-      [req.params.id]
+      [patientId]
     );
 
     if (!rows[0]) {
+      logPatientFlow("patient-detail-response", {
+        requestUrl,
+        patientId,
+        selectedPatientFound: false,
+        status: 404,
+        durationMs: Date.now() - requestStartedAt,
+      });
       return res.status(404).json({ ok: false, error: "Patient not found" });
     }
 
+    logPatientFlow("patient-detail-response", {
+      requestUrl,
+      patientId,
+      selectedPatientFound: true,
+      status: 200,
+      durationMs: Date.now() - requestStartedAt,
+    });
     res.json({ ok: true, patient: rows[0] });
   } catch (error) {
     next(error);

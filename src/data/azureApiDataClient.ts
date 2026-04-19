@@ -11,6 +11,10 @@ import type {
 } from "./types";
 
 let accessTokenProvider: (() => Promise<string | null> | string | null) | null = null;
+const debugPatientFlow =
+  String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "1" ||
+  String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "true" ||
+  import.meta.env.DEV;
 
 export function setAzureApiAccessTokenProvider(provider: typeof accessTokenProvider) {
   accessTokenProvider = provider;
@@ -21,7 +25,15 @@ function getApiBaseUrl() {
   if (!apiBaseUrl) {
     throw new Error("Missing VITE_AZURE_API_BASE_URL. Configure an explicit Azure API URL.");
   }
-  return apiBaseUrl.replace(/\/+$/, "");
+  const normalized = apiBaseUrl.replace(/\/+$/, "");
+  if (debugPatientFlow) {
+    console.info("[patient-flow][config] resolved_api_base_url", {
+      apiBaseUrl: normalized,
+      backendProvider: "azure-api",
+      dataSource: "azure-api -> postgresql",
+    });
+  }
+  return normalized;
 }
 
 async function toRequestError(response: Response) {
@@ -39,12 +51,29 @@ async function toRequestError(response: Response) {
 
 async function requestJson<T>(path: string): Promise<T> {
   const accessToken = accessTokenProvider ? await accessTokenProvider() : null;
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+  const requestUrl = `${getApiBaseUrl()}${path}`;
+  if (debugPatientFlow && (path.startsWith("/api/patients") || path.startsWith("/api/dashboard"))) {
+    console.info("[patient-flow][frontend][request]", {
+      path,
+      requestUrl,
+      hasAccessToken: Boolean(accessToken),
+      dataSource: "azure-api -> postgresql",
+    });
+  }
+  const response = await fetch(requestUrl, {
     headers: {
       "Content-Type": "application/json",
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
   });
+  if (debugPatientFlow && (path.startsWith("/api/patients") || path.startsWith("/api/dashboard"))) {
+    console.info("[patient-flow][frontend][response]", {
+      path,
+      requestUrl,
+      status: response.status,
+      ok: response.ok,
+    });
+  }
 
   if (!response.ok) {
     throw await toRequestError(response);
@@ -174,7 +203,16 @@ export const azureApiDataClient: DataClient = {
     if (params.sortDir) qs.set("sort_dir", params.sortDir);
     if (typeof params.limit === "number") qs.set("limit", String(params.limit));
     if (typeof params.offset === "number") qs.set("offset", String(params.offset));
-    const payload = await requestJson<{ patients: unknown[]; total?: number; limit?: number; offset?: number }>(`/api/patients?${qs.toString()}`);
+    const path = `/api/patients?${qs.toString()}`;
+    const payload = await requestJson<{ patients: unknown[]; total?: number; limit?: number; offset?: number }>(path);
+    if (debugPatientFlow) {
+      console.info("[patient-flow][frontend][patients-list]", {
+        path,
+        query: Object.fromEntries(qs.entries()),
+        count: Array.isArray(payload.patients) ? payload.patients.length : 0,
+        total: Number(payload.total ?? 0),
+      });
+    }
     return {
       patients: payload.patients ?? [],
       total: Number(payload.total ?? 0),
@@ -184,10 +222,25 @@ export const azureApiDataClient: DataClient = {
   },
   async getPatients() {
     const payload = await requestJson<{ patients: unknown[] }>("/api/patients");
+    if (debugPatientFlow) {
+      console.info("[patient-flow][frontend][patients-list]", {
+        path: "/api/patients",
+        count: Array.isArray(payload.patients) ? payload.patients.length : 0,
+      });
+    }
     return payload.patients;
   },
   async getPatient(patientId: string) {
-    const payload = await requestJson<{ patient: unknown | null }>(`/api/patients/${patientId}`);
+    const normalizedPatientId = String(patientId ?? "").trim().toLowerCase();
+    const path = `/api/patients/${encodeURIComponent(normalizedPatientId)}`;
+    const payload = await requestJson<{ patient: unknown | null }>(path);
+    if (debugPatientFlow) {
+      console.info("[patient-flow][frontend][patient-detail]", {
+        path,
+        patientId: normalizedPatientId,
+        found: Boolean(payload.patient),
+      });
+    }
     return payload.patient;
   },
   async getLatestIntakeSubmission(patientId: string) {

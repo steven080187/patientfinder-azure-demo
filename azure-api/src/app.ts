@@ -19,6 +19,13 @@ export function createApp() {
   const allowedOrigins = env.AZURE_API_ALLOWED_ORIGINS.split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+  console.info("[patient-flow][api][config]", {
+    port: env.PORT,
+    allowedOrigins,
+    entraAuthEnabled: Boolean(env.ENTRA_TENANT_ID && (env.ENTRA_API_AUDIENCES || env.ENTRA_API_CLIENT_ID)),
+    dataSource: "postgresql",
+    hasDatabaseUrl: Boolean(env.DATABASE_URL),
+  });
 
   app.use(helmet());
   app.use(

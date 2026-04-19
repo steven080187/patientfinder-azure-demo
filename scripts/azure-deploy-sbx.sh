@@ -14,6 +14,10 @@ API_APP="${AZURE_API_WEBAPP_NAME:-pfsbx-api-0412346}"
 echo "Checking Azure login..."
 az account show >/dev/null
 
+echo "Building frontend and API locally..."
+(cd "$ROOT" && npm run -s build)
+(cd "$ROOT/azure-api" && npm run -s build)
+
 echo "Staging deploy packages..."
 rm -rf "$FRONT_STAGE" "$API_STAGE" "$FRONT_ZIP" "$API_ZIP"
 mkdir -p "$FRONT_STAGE" "$API_STAGE"
@@ -22,18 +26,17 @@ mkdir -p "$FRONT_STAGE" "$API_STAGE"
 rsync -a "$ROOT"/ "$FRONT_STAGE"/ \
   --exclude .git \
   --exclude node_modules \
-  --exclude dist \
   --exclude .DS_Store \
   --exclude .vercel \
   --exclude patientfinder-mobile \
   --exclude azure-api/node_modules \
-  --exclude azure-api/dist
+  --exclude azure-api/dist \
+  --exclude azure-api/uploads
 
 # API package (azure-api app only)
 rsync -a "$ROOT"/azure-api/ "$API_STAGE"/ \
   --exclude .git \
   --exclude node_modules \
-  --exclude dist \
   --exclude .env.local \
   --exclude uploads
 
