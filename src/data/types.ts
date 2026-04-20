@@ -112,6 +112,8 @@ export interface DataClient {
   getLatestIntakeSubmission(patientId: string): Promise<unknown | null>;
   getPatientDocuments(patientId: string): Promise<PatientDocumentSummary[]>;
   downloadPatientDocument(documentId: string): Promise<Blob>;
+  renamePatientDocument(documentId: string, payload: { originalFileName: string }): Promise<PatientDocumentSummary>;
+  deletePatientDocument(documentId: string): Promise<void>;
   createPatient(payload: unknown): Promise<unknown>;
   updatePatient(patientId: string, payload: unknown): Promise<unknown>;
   deletePatient(patientId: string): Promise<void>;

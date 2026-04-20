@@ -76,3 +76,10 @@ export async function downloadBlobToBuffer(input: { containerName: string; blobN
 
   return Buffer.concat(chunks);
 }
+
+export async function deleteBlobIfExists(input: { containerName: string; blobName: string }) {
+  const service = getBlobServiceClient();
+  const containerClient = service.getContainerClient(input.containerName);
+  const blobClient = containerClient.getBlobClient(input.blobName);
+  await blobClient.deleteIfExists();
+}

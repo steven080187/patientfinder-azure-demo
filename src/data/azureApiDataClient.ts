@@ -254,6 +254,13 @@ export const azureApiDataClient: DataClient = {
   async downloadPatientDocument(documentId: string) {
     return requestBlob(`/api/patient-documents/${documentId}/download`);
   },
+  async renamePatientDocument(documentId: string, payload: { originalFileName: string }) {
+    const response = await patchJson<{ document: PatientDocumentSummary }>(`/api/patient-documents/${documentId}`, payload);
+    return response.document;
+  },
+  async deletePatientDocument(documentId: string) {
+    await deleteJson(`/api/patient-documents/${documentId}`);
+  },
   async createPatient(payload) {
     const response = await sendJson<{ patient: unknown }>("/api/patients", payload);
     return response.patient;

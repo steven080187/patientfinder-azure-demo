@@ -735,6 +735,17 @@
   flex-wrap: wrap;
 }
 
+.workspaceMobilePagerRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.workspaceMobilePagerRow .btn,
+.workspaceMobilePagerRow .btn.ghost {
+  flex: 1 1 140px;
+}
+
 .workspaceMobileHeroActions .btn,
 .workspaceMobileHeroActions .btn.ghost {
   flex: 1 1 160px;
@@ -1410,6 +1421,49 @@
   align-items: stretch;
 }
 
+.workspaceSheetWrap.adminCompact .workspaceSheetHead,
+.workspaceSheetWrap.adminCompact .workspaceSheetRow {
+  gap: 6px;
+}
+
+.workspaceSheetWrap.adminCompact .workspaceSheetHead {
+  padding: 8px 12px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.workspaceSheetWrap.adminCompact .workspaceSheetRow {
+  padding: 6px 12px;
+  font-size: 11px;
+}
+
+.workspaceSheetWrap.adminCompact .workspaceSheetName {
+  gap: 3px;
+}
+
+.workspaceSheetWrap.adminCompact .workspaceSheetName strong {
+  font-size: 12px;
+}
+
+.workspaceSheetWrap.adminCompact .workspaceTone {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+.workspaceSheetWrap.adminCompact .workspaceSheetNotes {
+  gap: 2px;
+  line-height: 1.2;
+}
+
+.workspaceSheetWrap.adminCompact .sheetCellInput,
+.workspaceSheetWrap.adminCompact .sheetCellSelect,
+.workspaceSheetWrap.adminCompact .sheetCellMulti {
+  min-height: 28px;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
 .workspaceSheetControls {
   display: flex;
   gap: 8px;
@@ -1799,6 +1853,11 @@
 
   .workspaceMobileHeroActions .btn,
   .workspaceMobileHeroActions .btn.ghost {
+    flex: 1 1 calc(50% - 6px);
+  }
+
+  .workspaceMobilePagerRow .btn,
+  .workspaceMobilePagerRow .btn.ghost {
     flex: 1 1 calc(50% - 6px);
   }
 
@@ -2806,6 +2865,31 @@
 .heroName { font-size:20px; font-weight:800; letter-spacing:-0.02em; }
 .heroMeta { font-size:13px; opacity:0.65; margin-top:4px; }
 
+.patientHeroActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btnCompact {
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  border-radius: 10px !important;
+}
+
+.overviewSubTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+
+.tabBtn.compact {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
 .grid3 {
   display:grid;
   grid-template-columns:1fr 1fr 1fr;
@@ -2878,6 +2962,41 @@
 }
 .trow:last-child { border-bottom:none; }
 .trow:hover { background:var(--bg-row-hover); }
+
+.docsToolbar {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.docsBreadcrumbs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.docsActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.docsSearchInput {
+  min-width: 260px;
+  max-width: 420px;
+}
+
+.docsFolderRow {
+  text-align: left;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
 
 /* ---- SNAP chips ---- */
 .snapWrap{ display:flex; flex-direction:column; gap:18px; margin-top:10px; }

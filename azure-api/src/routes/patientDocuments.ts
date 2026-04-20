@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { downloadBlobToBuffer, uploadPatientDocumentPdf } from "../blobStorage.js";
+import { deleteBlobIfExists, downloadBlobToBuffer, uploadPatientDocumentPdf } from "../blobStorage.js";
 import { query } from "../db.js";
 import { getRequestUser, requireAnyRole, requireAuth } from "../entraAuth.js";
 import type { PatientDocumentRow } from "../types.js";
@@ -17,12 +17,36 @@ const uploadSchema = z.object({
   pdfBase64: z.string().min(1),
 });
 
+const renameSchema = z.object({
+  originalFileName: z.string().min(1).max(255),
+});
+
 function normalizePdfFileName(fileName?: string) {
   const fallback = `scan_${new Date().toISOString().replace(/[:.]/g, "-")}.pdf`;
   if (!fileName) return fallback;
   const cleaned = fileName.trim().replace(/[^a-zA-Z0-9._-]+/g, "_");
   if (!cleaned) return fallback;
   return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned}.pdf`;
+}
+
+function normalizePathFileName(fileName: string) {
+  const withForwardSlashes = fileName.replace(/\\/g, "/");
+  const rawSegments = withForwardSlashes
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (!rawSegments.length) {
+    return normalizePdfFileName(fileName);
+  }
+  const sanitized = rawSegments.map((segment) =>
+    segment
+      .replace(/[^a-zA-Z0-9._ -]+/g, "_")
+      .replace(/^\.+/, "")
+      .trim()
+  );
+  const finalName = sanitized[sanitized.length - 1] || "document.pdf";
+  sanitized[sanitized.length - 1] = normalizePdfFileName(finalName);
+  return sanitized.join("/");
 }
 
 patientDocumentsRouter.post(
@@ -128,6 +152,71 @@ patientDocumentsRouter.get(
       );
 
       res.json({ ok: true, documents: rows });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+patientDocumentsRouter.patch(
+  "/api/patient-documents/:id",
+  requireAuth,
+  requireAnyRole("Admin", "Counselor", "Intake"),
+  async (req, res, next) => {
+    const parsed = renameSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ ok: false, error: "Invalid rename payload." });
+      return;
+    }
+    try {
+      const nextName = normalizePathFileName(parsed.data.originalFileName);
+      const rows = await query<PatientDocumentRow>(
+        `update public.patient_documents
+            set original_filename = $2,
+                updated_at = timezone('utc', now())
+          where id = $1
+          returning id, patient_id, document_type, original_filename, content_type, byte_size, sha256,
+                    storage_provider, storage_container, storage_blob_path, storage_url,
+                    uploaded_by_user_id, uploaded_by_email, created_at, updated_at`,
+        [req.params.id, nextName]
+      );
+      if (!rows[0]) {
+        res.status(404).json({ ok: false, error: "Document not found." });
+        return;
+      }
+      res.json({ ok: true, document: rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+patientDocumentsRouter.delete(
+  "/api/patient-documents/:id",
+  requireAuth,
+  requireAnyRole("Admin", "Counselor", "Intake"),
+  async (req, res, next) => {
+    try {
+      const rows = await query<
+        Pick<PatientDocumentRow, "id" | "storage_container" | "storage_blob_path">
+      >(
+        `delete from public.patient_documents
+          where id = $1
+          returning id, storage_container, storage_blob_path`,
+        [req.params.id]
+      );
+      const deleted = rows[0];
+      if (!deleted) {
+        res.status(404).json({ ok: false, error: "Document not found." });
+        return;
+      }
+
+      await deleteBlobIfExists({
+        containerName: deleted.storage_container,
+        blobName: deleted.storage_blob_path,
+      });
+
+      res.json({ ok: true, deletedId: deleted.id });
     } catch (error) {
       next(error);
     }

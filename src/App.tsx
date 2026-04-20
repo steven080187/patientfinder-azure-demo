@@ -245,6 +245,55 @@ function normalizePatientId(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function firstNonEmptyString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
+function normalizeImportDate(value: unknown, fallback?: string) {
+  const parsed = toDateOnly(value);
+  return parsed ?? fallback ?? null;
+}
+
+function resolveImportedPatientName(row: any) {
+  const direct = firstNonEmptyString(
+    row?.full_name,
+    row?.fullName,
+    row?.name,
+    row?.patient_name,
+    row?.patientName,
+    row?.submitted_full_name
+  );
+  if (direct) return direct;
+
+  const first = firstNonEmptyString(
+    row?.first_name,
+    row?.firstName,
+    row?.given_name,
+    row?.givenName,
+    row?.demographics?.first_name,
+    row?.demographics?.firstName
+  );
+  const last = firstNonEmptyString(
+    row?.last_name,
+    row?.lastName,
+    row?.family_name,
+    row?.familyName,
+    row?.demographics?.last_name,
+    row?.demographics?.lastName
+  );
+  return `${first} ${last}`.trim();
+}
+
+function resolveImportedPatientId(row: any) {
+  const rawId = firstNonEmptyString(row?.id, row?.patient_id, row?.patientId);
+  return rawId || crypto.randomUUID();
+}
+
 function fmt(iso?: string) {
   if (!iso) return "—";
   const normalized = toDateOnly(iso);
@@ -350,6 +399,13 @@ function matchesKindFilter(patient: Patient, filter: PatientKindFilter, nowIso: 
   if (filter === "Former Recent") return patient.kind === "Former Patient" && isPastRecentPatient(patient, nowIso);
   if (filter === "Former Archived") return patient.kind === "Former Patient" && !isPastRecentPatient(patient, nowIso);
   return patient.kind === filter;
+}
+
+function isBillingActivePatient(patient: Patient, nowIso: string) {
+  if (patient.kind !== "Former Patient") return true;
+  const reference = toDateOnly(patient.lastVisitDate ?? patient.intakeDate);
+  if (!reference) return true;
+  return dayDiff(reference, nowIso) <= 90;
 }
 
 function fieldKey(screenId: string, placeholder: string) {
@@ -917,6 +973,15 @@ function mergePatientWithExtras(row: any, extras: PatientExtras | undefined, ros
   };
 }
 
+function mapPatientRow(row: any) {
+  const normalizedId = normalizePatientId(row.id);
+  return mergePatientWithExtras(
+    { ...row, id: normalizedId },
+    undefined,
+    undefined
+  );
+}
+
 function buildSessions(sessionRows: any[], attendeeRows: any[]): Session[] {
   const byId = new Map<string, Session>();
 
@@ -1247,6 +1312,7 @@ export default function App() {
   const [jsonImporting, setJsonImporting] = useState(false);
 
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [directoryPatients, setDirectoryPatients] = useState<Patient[]>([]);
   const [patientDetail, setPatientDetail] = useState<Patient | null>(null);
   const [patientDetailLoading, setPatientDetailLoading] = useState(false);
   const [patientDetailError, setPatientDetailError] = useState<string | null>(null);
@@ -1647,9 +1713,20 @@ export default function App() {
     setLoadingPatients(false);
   });
 
+  const loadPatientDirectory = useEffectEvent(async () => {
+    if (!authReadyForApi) return;
+    try {
+      const rows = await dataClient.getPatients();
+      setDirectoryPatients(((rows as any[]) ?? []).map((row) => mapPatientRow(row)));
+    } catch (error) {
+      console.error("Unable to load full patient directory:", error);
+    }
+  });
+
   useEffect(() => {
     if (!activeAuthUser) {
       setPatients([]);
+      setDirectoryPatients([]);
       setCaseAssignments({});
       setCaseAssignmentEmails({});
       setPatientTotal(0);
@@ -1665,7 +1742,8 @@ export default function App() {
     }
 
     void loadDashboardData();
-  }, [activeAuthUser, authReadyForApi, patientPage, qRaw, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, loadDashboardData]);
+    void loadPatientDirectory();
+  }, [activeAuthUser, authReadyForApi, patientPage, qRaw, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, loadDashboardData, loadPatientDirectory]);
 
 
   const [theme, setThemeState] = useState<ThemeId>(() => {
@@ -1739,6 +1817,14 @@ export default function App() {
   const dashboardScopePatients = useMemo(
     () => (forceRoster ? patients : caseLoadPatients),
     [forceRoster, patients, caseLoadPatients]
+  );
+  const operationalPatients = useMemo(
+    () => (directoryPatients.length ? directoryPatients : patients),
+    [directoryPatients, patients]
+  );
+  const billingPatients = useMemo(
+    () => operationalPatients.filter((patient) => isBillingActivePatient(patient, currentWeek)),
+    [operationalPatients, currentWeek]
   );
 
   useEffect(() => {
@@ -2002,6 +2088,7 @@ export default function App() {
 
   const refreshPatients = async () => {
     await loadDashboardData();
+    await loadPatientDirectory();
   };
 
   useEffect(() => {
@@ -2420,24 +2507,48 @@ export default function App() {
       const rows = JSON.parse(text);
       if (!Array.isArray(rows)) throw new Error('JSON must be a top-level array of patient objects.');
       const now = new Date().toISOString();
-      const records = rows.map((r: any) => ({
-        id: r.id || crypto.randomUUID(),
-        full_name: (r.full_name || r.name || '').trim(),
-        mrn: r.mrn || null,
-        status: r.status || 'new',
-        location: r.location || null,
-        intake_date: r.intake_date || now.substring(0, 10),
-        primary_program: r.primary_program || r.program || null,
-        counselor_name: r.counselor_name || r.counselor || null,
-        flags: Array.isArray(r.flags) ? r.flags : [],
-        last_visit_date: r.last_visit_date || null,
-        next_appt_date: r.next_appt_date || null,
-        created_at: now,
-        updated_at: now,
-      }));
+      const today = now.substring(0, 10);
+      const skippedRows: number[] = [];
+      const records = rows
+        .map((r: any, index: number) => {
+          const fullName = resolveImportedPatientName(r);
+          const mrn = firstNonEmptyString(r?.mrn, r?.sage_id, r?.sageId) || null;
+          const externalId = firstNonEmptyString(r?.external_id, r?.externalId, r?.client_id, r?.clientId) || null;
+          if (!fullName && !mrn && !externalId) {
+            skippedRows.push(index + 1);
+            return null;
+          }
+          return {
+            id: resolveImportedPatientId(r),
+            full_name: fullName || `MRN ${mrn ?? externalId ?? index + 1}`,
+            mrn,
+            external_id: externalId,
+            status: firstNonEmptyString(r?.status, r?.patient_status) || 'new',
+            location: firstNonEmptyString(r?.location, r?.site, r?.clinic) || null,
+            intake_date: normalizeImportDate(r?.intake_date ?? r?.intakeDate ?? r?.admit_date ?? r?.admitDate, today),
+            primary_program: firstNonEmptyString(r?.primary_program, r?.primaryProgram, r?.program) || null,
+            counselor_name: firstNonEmptyString(r?.counselor_name, r?.counselorName, r?.counselor) || null,
+            flags: Array.isArray(r?.flags) ? r.flags : [],
+            last_visit_date: normalizeImportDate(r?.last_visit_date ?? r?.lastVisitDate),
+            next_appt_date: normalizeImportDate(r?.next_appt_date ?? r?.nextApptDate ?? r?.next_appointment_date),
+            created_at: now,
+            updated_at: now,
+          };
+        })
+        .filter((record): record is NonNullable<typeof record> => Boolean(record));
+      if (!records.length) {
+        throw new Error("No valid patient rows found. Expected at least a name, MRN, or external ID per row.");
+      }
       await dataClient.bulkUpsertPatients({ records });
       await refreshPatients();
-      alert(`✓ Imported ${records.length} patient${records.length === 1 ? '' : 's'}.`);
+      if (skippedRows.length) {
+        alert(
+          `✓ Imported ${records.length} patient${records.length === 1 ? '' : 's'}.\n` +
+          `Skipped ${skippedRows.length} row${skippedRows.length === 1 ? '' : 's'} with no usable identity fields.`
+        );
+      } else {
+        alert(`✓ Imported ${records.length} patient${records.length === 1 ? '' : 's'}.`);
+      }
     } catch (err) {
       alert('Import failed: ' + String(err));
     }
@@ -2623,7 +2734,22 @@ export default function App() {
                 <div className="workspaceMobileStatusRow">
                 </div>
 
-                {!privacyLocked ? <div className="workspaceMobileTopSub">{results.length} patient{results.length === 1 ? "" : "s"} in view.</div> : null}
+                {!privacyLocked ? (
+                  <div className="workspaceMobileTopSub">
+                    {results.length} visible • {patientPageStart}-{patientPageEnd} of {patientTotal}
+                  </div>
+                ) : null}
+
+                {!privacyLocked && patientTotal > 0 ? (
+                  <div className="workspaceMobilePagerRow">
+                    <button className="btn ghost" disabled={!canPageBack || loadingPatients} onClick={() => setPatientPage((prev) => Math.max(0, prev - 1))}>
+                      Prev page
+                    </button>
+                    <button className="btn ghost" disabled={!canPageForward || loadingPatients} onClick={() => setPatientPage((prev) => prev + 1)}>
+                      Next page
+                    </button>
+                  </div>
+                ) : null}
 
                 {!privacyLocked ? (
                   <div className="workspaceMobileHeroActions">
@@ -3051,6 +3177,7 @@ export default function App() {
                         onOpen={openPatient}
                         selected={selected}
                         canHighlightPatient={hasAdminRole}
+                        isAdminView={hasAdminRole}
                         onHighlightPatient={openPatientHighlightComposer}
                       />
                     </div>
@@ -3211,7 +3338,7 @@ export default function App() {
         </div>
 
         <AttendancePage
-          patients={patients}
+          patients={operationalPatients}
           onCommitBilling={commitPatientBilling}
           onAddDrugTest={addPatientDrugTest}
         />
@@ -3239,7 +3366,7 @@ export default function App() {
           </button>
         </div>
 
-        <BillingPage patients={patients} billingEntries={billingEntries} />
+        <BillingPage patients={billingPatients} billingEntries={billingEntries} />
         <ThemePicker theme={theme} setTheme={applyTheme} />
       </div>
     );
@@ -3268,7 +3395,7 @@ export default function App() {
           groups={groupSessions}
           openingGroupId={openingGroupId}
           onOpenPdf={openGroupPdf}
-          patients={patients}
+          patients={operationalPatients}
           activeCounselorName={activeAuthUser.name || activeAuthUser.email}
           activeSession={liveGroupState}
           busy={liveGroupBusy}
@@ -3475,6 +3602,7 @@ function SearchResults({
   onOpen,
   selected,
   canHighlightPatient,
+  isAdminView,
   onHighlightPatient,
 }: {
   view: ViewMode;
@@ -3491,6 +3619,7 @@ function SearchResults({
   onOpen: (id: string) => void;
   selected?: Patient;
   canHighlightPatient: boolean;
+  isAdminView: boolean;
   onHighlightPatient: (patientId: string) => void;
 }) {
   const weekDate = todayIso();
@@ -3646,7 +3775,7 @@ function SearchResults({
               <div className="workspaceSectionLabel">Roster Sheet</div>
             </div>
           </div>
-        <div className="workspaceSheetWrap">
+        <div className={isAdminView ? "workspaceSheetWrap adminCompact" : "workspaceSheetWrap"}>
           <div
             className="workspaceSheet"
             ref={sheetScrollRef}
@@ -4226,11 +4355,17 @@ function PatientPage({
   onHighlightPatient: () => void;
 }) {
   const [tab, setTab] = useState<"overview" | "documents" | "intake" | "snap" | "health" | "consents" | "attendance">("overview");
+  const [overviewPane, setOverviewPane] = useState<"summary" | "alerts" | "roster" | "compliance">("summary");
   const [sub, setSub] = useState<IntakeSubmission | null>(null);
   const [subLoading, setSubLoading] = useState(true);
   const [documents, setDocuments] = useState<PatientDocumentSummary[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [downloadingDocumentId, setDownloadingDocumentId] = useState<string | null>(null);
+  const [documentsPath, setDocumentsPath] = useState<string[]>([]);
+  const [documentsSearch, setDocumentsSearch] = useState("");
+  const [documentsSort, setDocumentsSort] = useState<"name" | "date" | "size">("name");
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
+  const [documentsBusy, setDocumentsBusy] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
   const [programSaving, setProgramSaving] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
@@ -4336,6 +4471,19 @@ function PatientPage({
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
+  const normalizeDocumentPath = (value: string) => {
+    const segments = value
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => part.replace(/[^a-zA-Z0-9._ -]+/g, "_"));
+    if (!segments.length) return "";
+    const fileName = segments[segments.length - 1];
+    segments[segments.length - 1] = fileName.toLowerCase().endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+    return segments.join("/");
+  };
+
   const createIntakeSub = async () => {
     const emptyJson = {
       meta: { createdAt: new Date().toISOString(), source: "manual" },
@@ -4361,6 +4509,32 @@ function PatientPage({
     }
   };
 
+  const printPatientDocument = async (document: PatientDocumentSummary) => {
+    setDownloadingDocumentId(document.id);
+    try {
+      const blob = await dataClient.downloadPatientDocument(document.id);
+      const url = URL.createObjectURL(blob);
+      const printWindow = window.open("", "_blank", "noopener,noreferrer");
+      if (!printWindow) {
+        window.alert("Popup blocked. Allow popups to print documents.");
+        URL.revokeObjectURL(url);
+        return;
+      }
+      printWindow.document.write(
+        `<html><head><title>${document.original_filename.replace(/"/g, "")}</title></head>` +
+        `<body style="margin:0"><iframe id="pdf" src="${url}" style="border:0;width:100vw;height:100vh"></iframe></body></html>`
+      );
+      printWindow.document.close();
+      printWindow.onload = () => {
+        printWindow.focus();
+        printWindow.print();
+      };
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } finally {
+      setDownloadingDocumentId(null);
+    }
+  };
+
   const formatDocumentSize = (value: number | string) => {
     const n = typeof value === "string" ? Number(value) : value;
     if (!Number.isFinite(n) || n <= 0) return "—";
@@ -4368,6 +4542,195 @@ function PatientPage({
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
     return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   };
+
+  const allDocumentFolders = useMemo(() => {
+    const set = new Set<string>();
+    documents.forEach((doc) => {
+      const cleaned = normalizeDocumentPath(doc.original_filename || "");
+      const parts = cleaned.split("/").filter(Boolean);
+      for (let i = 1; i < parts.length; i += 1) {
+        set.add(parts.slice(0, i).join("/"));
+      }
+    });
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [documents]);
+
+  const currentPathKey = documentsPath.join("/");
+  const { raw: docsSearchRaw } = useMemo(() => normalizeQuery(documentsSearch), [documentsSearch]);
+
+  const docFolderEntries = useMemo(() => {
+    const folderMap = new Map<string, string>();
+    const fileRows: PatientDocumentSummary[] = [];
+    documents.forEach((doc) => {
+      const cleaned = normalizeDocumentPath(doc.original_filename || "");
+      const parts = cleaned.split("/").filter(Boolean);
+      const parent = parts.slice(0, -1).join("/");
+      if (parent !== currentPathKey) return;
+      fileRows.push(doc);
+    });
+    allDocumentFolders.forEach((folderPath) => {
+      const parts = folderPath.split("/");
+      const parent = parts.slice(0, -1).join("/");
+      if (parent !== currentPathKey) return;
+      const name = parts[parts.length - 1];
+      folderMap.set(name, folderPath);
+    });
+    const folders = [...folderMap.entries()]
+      .map(([name, fullPath]) => ({ name, fullPath }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const files = [...fileRows].sort((a, b) => a.original_filename.localeCompare(b.original_filename));
+    return { folders, files };
+  }, [allDocumentFolders, currentPathKey, documents]);
+
+  const docVisibleFiles = useMemo(() => {
+    const filtered = docsSearchRaw
+      ? docFolderEntries.files.filter((doc) => normalizeDocumentPath(doc.original_filename).toLowerCase().includes(docsSearchRaw))
+      : docFolderEntries.files;
+    const sorted = [...filtered];
+    if (documentsSort === "date") {
+      sorted.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    } else if (documentsSort === "size") {
+      sorted.sort((a, b) => Number(b.byte_size) - Number(a.byte_size));
+    } else {
+      sorted.sort((a, b) => a.original_filename.localeCompare(b.original_filename));
+    }
+    return sorted;
+  }, [docFolderEntries.files, docsSearchRaw, documentsSort]);
+
+  const refreshDocuments = async () => {
+    setDocumentsLoading(true);
+    try {
+      const rows = await dataClient.getPatientDocuments(patient.id);
+      setDocuments(rows);
+    } finally {
+      setDocumentsLoading(false);
+    }
+  };
+
+  const folderContainsDocument = (folderPath: string, doc: PatientDocumentSummary) => {
+    const docPath = normalizeDocumentPath(doc.original_filename);
+    const docFolder = docPath.split("/").slice(0, -1).join("/");
+    return docFolder === folderPath || docFolder.startsWith(`${folderPath}/`);
+  };
+
+  const renameDocument = async (doc: PatientDocumentSummary) => {
+    const currentName = normalizeDocumentPath(doc.original_filename || "").split("/").filter(Boolean).pop() || doc.original_filename;
+    const nextName = window.prompt("Rename file", currentName);
+    if (!nextName || !nextName.trim()) return;
+    const parent = normalizeDocumentPath(doc.original_filename || "").split("/").filter(Boolean).slice(0, -1).join("/");
+    const nextPath = normalizeDocumentPath(parent ? `${parent}/${nextName}` : nextName);
+    if (!nextPath) return;
+    await dataClient.renamePatientDocument(doc.id, { originalFileName: nextPath });
+    await refreshDocuments();
+  };
+
+  const moveDocument = async (doc: PatientDocumentSummary) => {
+    const currentPath = normalizeDocumentPath(doc.original_filename || "");
+    const available = allDocumentFolders.length ? `\nExisting folders:\n${allDocumentFolders.join("\n")}` : "";
+    const folderInput = window.prompt(
+      `Move "${currentPath.split("/").pop()}" to folder path (leave blank for root).${available}`,
+      currentPath.split("/").slice(0, -1).join("/")
+    );
+    if (folderInput === null) return;
+    const fileName = currentPath.split("/").pop() || doc.original_filename;
+    const targetPath = normalizeDocumentPath(folderInput.trim() ? `${folderInput.trim()}/${fileName}` : fileName);
+    if (!targetPath) return;
+    await dataClient.renamePatientDocument(doc.id, { originalFileName: targetPath });
+    await refreshDocuments();
+  };
+
+  const deleteDocument = async (doc: PatientDocumentSummary) => {
+    const ok = window.confirm(`Delete document "${doc.original_filename}"? This cannot be undone.`);
+    if (!ok) return;
+    await dataClient.deletePatientDocument(doc.id);
+    await refreshDocuments();
+  };
+
+  const renameFolder = async (folderPath: string) => {
+    const parts = folderPath.split("/").filter(Boolean);
+    const currentName = parts[parts.length - 1];
+    const nextName = window.prompt("Rename folder", currentName);
+    if (!nextName || !nextName.trim()) return;
+    const parent = parts.slice(0, -1);
+    const nextFolderPath = [...parent, nextName.trim().replace(/[^a-zA-Z0-9._ -]+/g, "_")].filter(Boolean).join("/");
+    if (!nextFolderPath || nextFolderPath === folderPath) return;
+    const impacted = documents.filter((doc) => folderContainsDocument(folderPath, doc));
+    if (!impacted.length) return;
+    setDocumentsBusy(true);
+    try {
+      for (const doc of impacted) {
+        const current = normalizeDocumentPath(doc.original_filename);
+        const next = current.startsWith(`${folderPath}/`) ? `${nextFolderPath}/${current.slice(folderPath.length + 1)}` : current;
+        await dataClient.renamePatientDocument(doc.id, { originalFileName: next });
+      }
+      await refreshDocuments();
+    } finally {
+      setDocumentsBusy(false);
+    }
+  };
+
+  const deleteFolder = async (folderPath: string) => {
+    const impacted = documents.filter((doc) => folderContainsDocument(folderPath, doc));
+    if (!impacted.length) return;
+    const ok = window.confirm(`Delete folder "${folderPath}" and ${impacted.length} document(s)? This cannot be undone.`);
+    if (!ok) return;
+    setDocumentsBusy(true);
+    try {
+      for (const doc of impacted) {
+        await dataClient.deletePatientDocument(doc.id);
+      }
+      await refreshDocuments();
+    } finally {
+      setDocumentsBusy(false);
+    }
+  };
+
+  const bulkMoveSelected = async () => {
+    if (!selectedDocumentIds.length) return;
+    const folderInput = window.prompt("Move selected files to folder path (leave blank for root)", currentPathKey);
+    if (folderInput === null) return;
+    setDocumentsBusy(true);
+    try {
+      for (const docId of selectedDocumentIds) {
+        const doc = documents.find((row) => row.id === docId);
+        if (!doc) continue;
+        const fileName = normalizeDocumentPath(doc.original_filename).split("/").pop() || doc.original_filename;
+        const nextPath = normalizeDocumentPath(folderInput.trim() ? `${folderInput.trim()}/${fileName}` : fileName);
+        await dataClient.renamePatientDocument(doc.id, { originalFileName: nextPath });
+      }
+      setSelectedDocumentIds([]);
+      await refreshDocuments();
+    } finally {
+      setDocumentsBusy(false);
+    }
+  };
+
+  const bulkDeleteSelected = async () => {
+    if (!selectedDocumentIds.length) return;
+    const ok = window.confirm(`Delete ${selectedDocumentIds.length} selected document(s)? This cannot be undone.`);
+    if (!ok) return;
+    setDocumentsBusy(true);
+    try {
+      for (const docId of selectedDocumentIds) {
+        await dataClient.deletePatientDocument(docId);
+      }
+      setSelectedDocumentIds([]);
+      await refreshDocuments();
+    } finally {
+      setDocumentsBusy(false);
+    }
+  };
+
+  const createFolderHere = () => {
+    const folderName = window.prompt("New folder name");
+    if (!folderName || !folderName.trim()) return;
+    const next = [...documentsPath, folderName.trim().replace(/[^a-zA-Z0-9._ -]+/g, "_")].filter(Boolean);
+    setDocumentsPath(next);
+  };
+
+  useEffect(() => {
+    setSelectedDocumentIds([]);
+  }, [documentsPath, documentsSearch, documentsSort]);
 
   return (
     <div className="patientWrap">
@@ -4381,21 +4744,21 @@ function PatientPage({
                 MRN {patient.mrn ?? "—"} • {patient.primaryProgram ?? "—"} • Counselor {patient.counselor ?? "—"} • Signed in as {counselorId}
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="patientHeroActions">
               {canHighlightPatient ? (
-                <button className="btn btnHighlight" onClick={onHighlightPatient}>
-                  Highlight for counselor
+                <button className="btn ghost btnCompact" onClick={onHighlightPatient}>
+                  Highlight
                 </button>
               ) : null}
-              <button className={isAssigned ? "btn" : "btn ghost"} onClick={onToggleAssignment}>
-                {isAssigned ? "Remove from my case load" : "Add to my case load"}
+              <button className={isAssigned ? "btn ghost btnCompact" : "btn ghost btnCompact"} onClick={onToggleAssignment}>
+                {isAssigned ? "Remove Case Assignment" : "Assign Case"}
               </button>
               <select
                 className="select"
                 value={patient.kind}
                 onChange={(e) => handleStatusChange(e.target.value as PatientKind)}
                 disabled={statusChanging}
-                style={{ minWidth: 140 }}
+                style={{ minWidth: 138 }}
               >
                 <option value="New Patient">New Patient</option>
                 <option value="Current Patient">Current Patient</option>
@@ -4404,13 +4767,7 @@ function PatientPage({
                 <option value="Former Patient">Former Patient</option>
               </select>
               <div className={pillClass(patient.kind)}>{patient.kind}</div>
-              <button
-                className="btn btnDanger"
-                style={{ fontSize: 13, padding: "8px 14px" }}
-                onClick={() => setShowDeleteModal(true)}
-              >
-                🗑 Delete
-              </button>
+              <button className="btn btnDanger btnCompact" onClick={() => setShowDeleteModal(true)}>Delete</button>
             </div>
           </div>
 
@@ -4424,23 +4781,51 @@ function PatientPage({
 
           {tab === "overview" ? (
             <>
-              <div className="grid3">
-                <div className="tile">
-                  <div className="label">Intake date</div>
-                  <div className="value">{fmt(patient.intakeDate)}</div>
-                </div>
-                <div className="tile">
-                  <div className="label">Last visit</div>
-                  <div className="value">{fmt(patient.lastVisitDate)}</div>
-                </div>
-                <div className="tile">
-                  <div className="label">Next appointment</div>
-                  <div className="value">{fmt(patient.nextApptDate)}</div>
-                </div>
+              <div className="overviewSubTabs">
+                <button className={overviewPane === "summary" ? "tabBtn on compact" : "tabBtn compact"} onClick={() => setOverviewPane("summary")}>Summary</button>
+                <button className={overviewPane === "alerts" ? "tabBtn on compact" : "tabBtn compact"} onClick={() => setOverviewPane("alerts")}>Signals</button>
+                <button className={overviewPane === "roster" ? "tabBtn on compact" : "tabBtn compact"} onClick={() => setOverviewPane("roster")}>Roster Fields</button>
+                <button className={overviewPane === "compliance" ? "tabBtn on compact" : "tabBtn compact"} onClick={() => setOverviewPane("compliance")}>Compliance</button>
               </div>
 
-              <div className="section">
-                <div className="sectionTitle">Patient control center</div>
+              {overviewPane === "summary" ? (
+                <>
+                  <div className="grid3">
+                    <div className="tile">
+                      <div className="label">Intake date</div>
+                      <div className="value">{fmt(patient.intakeDate)}</div>
+                    </div>
+                    <div className="tile">
+                      <div className="label">Last visit</div>
+                      <div className="value">{fmt(patient.lastVisitDate)}</div>
+                    </div>
+                    <div className="tile">
+                      <div className="label">Next appointment</div>
+                      <div className="value">{fmt(patient.nextApptDate)}</div>
+                    </div>
+                  </div>
+                  <div className="quickChecklist">
+                    <div className={`quickCheckItem ${isAssigned ? "good" : "neutral"}`}>
+                      <strong>Assignment</strong>
+                      <span>{isAssigned ? "Assigned to your case load" : "Not assigned to your case load"}</span>
+                    </div>
+                    <div className={`quickCheckItem ${getAttendanceTone(patient, allSessions, new Date().toISOString().slice(0, 10))}`}>
+                      <strong>Attendance</strong>
+                      <span>{getWeeklyAttendanceStats(patient, allSessions, new Date().toISOString().slice(0, 10)).goal ? "Weekly requirement active" : "Program target not set"}</span>
+                    </div>
+                    <div className={`quickCheckItem ${drugTestSummary.tone}`}>
+                      <strong>Drug testing</strong>
+                      <span>{drugTestSummary.label}</span>
+                    </div>
+                    <div className={`quickCheckItem ${problemListSummary.tone}`}>
+                      <strong>Problem list</strong>
+                      <span>{problemListSummary.reviewText}</span>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {overviewPane === "alerts" ? (
                 <div className="quickChecklist">
                   <div className={`quickCheckItem ${isAssigned ? "good" : "neutral"}`}>
                     <strong>Assignment</strong>
@@ -4467,8 +4852,10 @@ function PatientPage({
                     <span>{therapySummary.label}</span>
                   </div>
                 </div>
+              ) : null}
 
-                <div className="sectionSubTitle">Roster fields</div>
+              {overviewPane === "roster" ? (
+                <>
                 <div className="controlCenterGrid">
                   <label className="addField">
                     <span className="addLabel">Level of care</span>
@@ -4567,8 +4954,11 @@ function PatientPage({
                     placeholder="Quick notes for the roster and weekly updates"
                   />
                 </label>
+                </>
+              ) : null}
 
-                <div className="sectionSubTitle">Compliance settings</div>
+              {overviewPane === "compliance" ? (
+                <>
                 <div className="controlCenterGrid">
                   <label className="addField">
                     <span className="addLabel">Drug test schedule</span>
@@ -4668,44 +5058,128 @@ function PatientPage({
                 <div className="hintTiny" style={{ marginTop: 10 }}>
                   LOC drives attendance targets. Problem lists roll on a 30-day review and 90-day update cycle. Treatment plans should be created within 30 days of intake and updated every 6 months. These controls track deadlines and roster operations, not full clinical documentation.
                 </div>
-              </div>
+                </>
+              ) : null}
             </>
           ) : null}
 
           {tab === "documents" ? (
             <div className="section">
               <div className="sectionTitle">Patient Documents</div>
-              <div className="hintTiny">Documents uploaded from the scanner app are stored in Azure Blob and listed here.</div>
+              <div className="hintTiny">Organize files by folders/subfolders. Rename, move, and delete are available per file.</div>
+              <div className="docsToolbar">
+                <div className="docsBreadcrumbs">
+                  <button className="btn ghost btnCompact" onClick={() => setDocumentsPath([])}>Root</button>
+                  {documentsPath.map((segment, index) => (
+                    <button
+                      key={`${segment}-${index}`}
+                      className="btn ghost btnCompact"
+                      onClick={() => setDocumentsPath(documentsPath.slice(0, index + 1))}
+                    >
+                      {segment}
+                    </button>
+                  ))}
+                </div>
+                <div className="docsActions">
+                  <button className="btn ghost btnCompact" onClick={() => setDocumentsPath(documentsPath.slice(0, -1))} disabled={!documentsPath.length}>Up</button>
+                  <button className="btn ghost btnCompact" onClick={createFolderHere}>New Folder</button>
+                </div>
+              </div>
+              <div className="docsToolbar">
+                <input
+                  className="authInput docsSearchInput"
+                  placeholder="Search files in this folder"
+                  value={documentsSearch}
+                  onChange={(e) => setDocumentsSearch(e.target.value)}
+                />
+                <div className="docsActions">
+                  <select className="select" value={documentsSort} onChange={(e) => setDocumentsSort(e.target.value as "name" | "date" | "size")}>
+                    <option value="name">Sort: Name</option>
+                    <option value="date">Sort: Uploaded date</option>
+                    <option value="size">Sort: Size</option>
+                  </select>
+                  <button className="btn ghost btnCompact" onClick={() => setSelectedDocumentIds(docVisibleFiles.map((doc) => doc.id))} disabled={!docVisibleFiles.length}>Select all</button>
+                  <button className="btn ghost btnCompact" onClick={() => setSelectedDocumentIds([])} disabled={!selectedDocumentIds.length}>Clear</button>
+                  <button className="btn ghost btnCompact" onClick={() => void bulkMoveSelected()} disabled={!selectedDocumentIds.length || documentsBusy}>Move selected</button>
+                  <button className="btn btnDanger btnCompact" onClick={() => void bulkDeleteSelected()} disabled={!selectedDocumentIds.length || documentsBusy}>Delete selected</button>
+                </div>
+              </div>
               {documentsLoading ? (
                 <div className="hintTiny">Loading documents…</div>
               ) : (
-                <div className="table" style={{ marginTop: 12 }}>
-                  <div className="thead" style={{ gridTemplateColumns: "1.5fr 1fr 0.8fr 1.1fr 0.8fr" }}>
-                    <div>Filename</div>
+                <div className="table docsTable" style={{ marginTop: 12 }}>
+                  <div className="thead" style={{ gridTemplateColumns: "0.35fr 2.2fr 0.9fr 0.9fr 1fr 1.9fr" }}>
+                    <div>Select</div>
+                    <div>Name</div>
                     <div>Type</div>
                     <div>Size</div>
                     <div>Uploaded</div>
-                    <div>Action</div>
+                    <div>Actions</div>
                   </div>
-                  {documents.map((doc) => (
-                    <div key={doc.id} className="trow" style={{ gridTemplateColumns: "1.5fr 1fr 0.8fr 1.1fr 0.8fr" }}>
-                      <div className="strong">{doc.original_filename}</div>
-                      <div>{doc.document_type}</div>
-                      <div>{formatDocumentSize(doc.byte_size)}</div>
-                      <div>{fmt(doc.created_at)}</div>
-                      <div>
-                        <button
-                          className="btn ghost"
-                          style={{ padding: "6px 10px", fontSize: 12 }}
-                          disabled={downloadingDocumentId === doc.id}
-                          onClick={() => void openPatientDocument(doc)}
-                        >
-                          {downloadingDocumentId === doc.id ? "Opening…" : "Open"}
-                        </button>
+                  {docFolderEntries.folders.map((folder) => (
+                    <div
+                      key={folder.fullPath}
+                      className="trow docsFolderRow"
+                      style={{ gridTemplateColumns: "0.35fr 2.2fr 0.9fr 0.9fr 1fr 1.9fr" }}
+                    >
+                      <div>—</div>
+                      <div className="strong">[Folder] {folder.name}</div>
+                      <div>Folder</div>
+                      <div>—</div>
+                      <div>—</div>
+                      <div className="docsActions">
+                        <button className="btn ghost btnCompact" onClick={() => setDocumentsPath(folder.fullPath.split("/"))}>Open</button>
+                        <button className="btn ghost btnCompact" onClick={() => void renameFolder(folder.fullPath)} disabled={documentsBusy}>Rename</button>
+                        <button className="btn btnDanger btnCompact" onClick={() => void deleteFolder(folder.fullPath)} disabled={documentsBusy}>Delete</button>
                       </div>
                     </div>
                   ))}
-                  {!documents.length ? <div className="empty">No documents uploaded for this patient yet.</div> : null}
+                  {docVisibleFiles.map((doc) => {
+                    const parts = normalizeDocumentPath(doc.original_filename || "").split("/").filter(Boolean);
+                    const displayName = parts[parts.length - 1] || doc.original_filename;
+                    const selectedDoc = selectedDocumentIds.includes(doc.id);
+                    return (
+                      <div key={doc.id} className="trow" style={{ gridTemplateColumns: "0.35fr 2.2fr 0.9fr 0.9fr 1fr 1.9fr" }}>
+                        <div>
+                          <input
+                            type="checkbox"
+                            checked={selectedDoc}
+                            onChange={(e) =>
+                              setSelectedDocumentIds((prev) =>
+                                e.target.checked ? [...new Set([...prev, doc.id])] : prev.filter((id) => id !== doc.id)
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="strong">[File] {displayName}</div>
+                        <div>{doc.document_type}</div>
+                        <div>{formatDocumentSize(doc.byte_size)}</div>
+                        <div>{fmt(doc.created_at)}</div>
+                        <div className="docsActions">
+                          <button
+                            className="btn ghost btnCompact"
+                            disabled={downloadingDocumentId === doc.id}
+                            onClick={() => void openPatientDocument(doc)}
+                          >
+                            {downloadingDocumentId === doc.id ? "Opening…" : "Open"}
+                          </button>
+                          <button
+                            className="btn ghost btnCompact"
+                            disabled={downloadingDocumentId === doc.id}
+                            onClick={() => void printPatientDocument(doc)}
+                          >
+                            {downloadingDocumentId === doc.id ? "Preparing…" : "Print"}
+                          </button>
+                          <button className="btn ghost btnCompact" onClick={() => void renameDocument(doc)} disabled={documentsBusy}>Rename</button>
+                          <button className="btn ghost btnCompact" onClick={() => void moveDocument(doc)} disabled={documentsBusy}>Move</button>
+                          <button className="btn btnDanger btnCompact" onClick={() => void deleteDocument(doc)} disabled={documentsBusy}>Delete</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!docFolderEntries.folders.length && !docFolderEntries.files.length ? (
+                    <div className="empty">No documents in this folder yet.</div>
+                  ) : null}
                 </div>
               )}
             </div>
