@@ -55,6 +55,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 30
     permissions:
       contents: read
 
@@ -70,6 +71,8 @@ jobs:
           DEPLOY_USER: ${{ secrets.AZURE_WEBAPP_DEPLOY_USER }}
           DEPLOY_PASS: ${{ secrets.AZURE_WEBAPP_DEPLOY_PASS }}
           KUDU_URL: https://pfsbx-front-0412346.scm.azurewebsites.net
+          FRONTEND_URL: https://pfsbx-front-0412346.azurewebsites.net
+          API_URL: https://pfsbx-api-0412346.azurewebsites.net
         run: |
           set -euo pipefail
           if [ -z "${DEPLOY_USER:-}" ] || [ -z "${DEPLOY_PASS:-}" ]; then
@@ -80,4 +83,76 @@ jobs:
           cd deploy-package
           zip -qr ../deploy.zip .
           cd ..
-          curl -fsS -u "$DEPLOY_USER:$DEPLOY_PASS" --data-binary @deploy.zip "$KUDU_URL/api/zipdeploy"
+
+          deploy_with_retry() {
+            local max_attempts=3
+            local attempt=1
+
+            while [ "$attempt" -le "$max_attempts" ]; do
+              echo "Starting deploy attempt ${attempt}/${max_attempts}..."
+
+              local headers_file
+              headers_file="$(mktemp)"
+              local status_url=""
+
+              if ! curl -fsS --max-time 120 -D "$headers_file" \
+                -u "$DEPLOY_USER:$DEPLOY_PASS" \
+                --data-binary @deploy.zip \
+                "$KUDU_URL/api/zipdeploy?isAsync=true" >/dev/null; then
+                echo "ZipDeploy request failed on attempt ${attempt}."
+                rm -f "$headers_file"
+                attempt=$((attempt + 1))
+                sleep 10
+                continue
+              fi
+
+              status_url="$(awk 'BEGIN{IGNORECASE=1} /^Location:/ {print $2}' "$headers_file" | tr -d '\r\n')"
+              rm -f "$headers_file"
+              if [ -z "$status_url" ]; then
+                status_url="$KUDU_URL/api/deployments/latest"
+              fi
+
+              echo "Polling deployment status: $status_url"
+              local poll
+              local poll_limit=90
+              for poll in $(seq 1 "$poll_limit"); do
+                local payload
+                payload="$(curl -fsS --max-time 30 -u "$DEPLOY_USER:$DEPLOY_PASS" "$status_url")"
+                local status
+                status="$(printf '%s' "$payload" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(String(j.status ?? ''));}catch{process.stdout.write('');}})")"
+
+                if [ "$status" = "4" ]; then
+                  echo "Deploy succeeded."
+                  return 0
+                fi
+
+                if [ "$status" = "3" ] || [ "$status" = "5" ]; then
+                  echo "Deploy failed with status ${status} on attempt ${attempt}."
+                  break
+                fi
+
+                echo "Deploy still running (status=${status:-unknown}, poll ${poll}/${poll_limit})..."
+                sleep 10
+              done
+
+              attempt=$((attempt + 1))
+              if [ "$attempt" -le "$max_attempts" ]; then
+                echo "Retrying deploy after backoff..."
+                sleep 15
+              fi
+            done
+
+            echo "Deployment failed after ${max_attempts} attempts."
+            return 1
+          }
+
+          smoke_tests() {
+            echo "Running post-deploy smoke tests..."
+            curl -fsS --max-time 30 "$FRONTEND_URL" | grep -q '<div id="root"></div>'
+            curl -fsS --max-time 30 "$API_URL/health" | grep -q '"ok":true'
+            curl -fsS --max-time 30 "$API_URL/api/auth/options" | grep -q '"ok":true'
+            echo "Smoke tests passed."
+          }
+
+          deploy_with_retry
+          smoke_tests
