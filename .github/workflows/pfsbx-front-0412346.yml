@@ -117,7 +117,11 @@ jobs:
               local poll_limit=90
               for poll in $(seq 1 "$poll_limit"); do
                 local payload
-                payload="$(curl -fsS --max-time 30 -u "$DEPLOY_USER:$DEPLOY_PASS" "$status_url")"
+                if ! payload="$(curl -fsS --max-time 30 -u "$DEPLOY_USER:$DEPLOY_PASS" "$status_url")"; then
+                  echo "Status poll request timed out/failed (poll ${poll}/${poll_limit}); continuing..."
+                  sleep 10
+                  continue
+                fi
                 local status
                 status="$(printf '%s' "$payload" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(String(j.status ?? ''));}catch{process.stdout.write('');}})")"
 
