@@ -63,7 +63,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
-          path: .
+          path: deploy-package
 
       - name: Deploy to Azure Web App (ZipDeploy)
         env:
@@ -77,5 +77,7 @@ jobs:
             exit 1
           fi
 
-          zip -qr deploy.zip .
+          cd deploy-package
+          zip -qr ../deploy.zip .
+          cd ..
           curl -fsS -u "$DEPLOY_USER:$DEPLOY_PASS" --data-binary @deploy.zip "$KUDU_URL/api/zipdeploy"
