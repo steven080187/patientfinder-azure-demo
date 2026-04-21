@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { deleteBlobIfExists, downloadBlobToBuffer, uploadPatientDocumentPdf } from "../blobStorage.js";
+import { deleteBlobIfExists, downloadBlobStream, uploadPatientDocumentPdf } from "../blobStorage.js";
 import { query } from "../db.js";
 import { getRequestUser, requireAnyRole, requireAuth } from "../entraAuth.js";
 import type { PatientDocumentRow } from "../types.js";
@@ -47,6 +47,17 @@ function normalizePathFileName(fileName: string) {
   const finalName = sanitized[sanitized.length - 1] || "document.pdf";
   sanitized[sanitized.length - 1] = normalizePdfFileName(finalName);
   return sanitized.join("/");
+}
+
+function getDownloadSafeFileName(fileName: string) {
+  const basename = fileName
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter(Boolean)
+    .pop()
+    ?.trim();
+  const fallback = normalizePdfFileName("document.pdf");
+  return normalizePdfFileName(basename || fallback);
 }
 
 patientDocumentsRouter.post(
@@ -245,17 +256,21 @@ patientDocumentsRouter.get(
         return;
       }
 
-      const fileBuffer = await downloadBlobToBuffer({
+      const file = await downloadBlobStream({
         containerName: document.storage_container,
         blobName: document.storage_blob_path,
       });
 
-      res.setHeader("Content-Type", document.content_type || "application/pdf");
+      res.setHeader("Content-Type", document.content_type || file.contentType || "application/pdf");
+      const downloadName = getDownloadSafeFileName(document.original_filename);
       res.setHeader(
         "Content-Disposition",
-        `inline; filename="${document.original_filename.replace(/"/g, "")}"`
+        `inline; filename="${downloadName.replace(/"/g, "")}"`
       );
-      res.send(fileBuffer);
+      if (typeof file.contentLength === "number" && Number.isFinite(file.contentLength)) {
+        res.setHeader("Content-Length", String(file.contentLength));
+      }
+      file.readableStreamBody.pipe(res);
     } catch (error) {
       next(error);
     }

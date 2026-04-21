@@ -77,6 +77,22 @@ export async function downloadBlobToBuffer(input: { containerName: string; blobN
   return Buffer.concat(chunks);
 }
 
+export async function downloadBlobStream(input: { containerName: string; blobName: string }) {
+  const service = getBlobServiceClient();
+  const containerClient = service.getContainerClient(input.containerName);
+  const blobClient = containerClient.getBlobClient(input.blobName);
+  const response = await blobClient.download();
+  if (!response.readableStreamBody) {
+    throw new Error("Blob download stream was empty.");
+  }
+
+  return {
+    readableStreamBody: response.readableStreamBody,
+    contentLength: response.contentLength ?? null,
+    contentType: response.contentType ?? null,
+  };
+}
+
 export async function deleteBlobIfExists(input: { containerName: string; blobName: string }) {
   const service = getBlobServiceClient();
   const containerClient = service.getContainerClient(input.containerName);
