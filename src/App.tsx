@@ -4366,6 +4366,7 @@ function PatientPage({
   const [documentsSort, setDocumentsSort] = useState<"name" | "date" | "size">("name");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [documentsBusy, setDocumentsBusy] = useState(false);
+  const [documentPreview, setDocumentPreview] = useState<{ url: string; fileName: string } | null>(null);
   const [statusChanging, setStatusChanging] = useState(false);
   const [programSaving, setProgramSaving] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
@@ -4502,11 +4503,36 @@ function PatientPage({
     try {
       const blob = await dataClient.downloadPatientDocument(document.id);
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      const fileName = normalizeDocumentPath(document.original_filename || "").split("/").pop() || "document.pdf";
+      setDocumentPreview((prev) => {
+        if (prev) URL.revokeObjectURL(prev.url);
+        return { url, fileName };
+      });
+    } catch (error) {
+      console.error("Unable to open patient document:", error);
+      window.alert("Could not open that document right now.");
     } finally {
       setDownloadingDocumentId(null);
     }
+  };
+
+  const printBlobUrl = (blobUrl: string) => {
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.border = "0";
+    iframe.src = blobUrl;
+    iframe.onload = () => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      window.setTimeout(() => {
+        iframe.remove();
+      }, 1_000);
+    };
+    document.body.appendChild(iframe);
   };
 
   const printPatientDocument = async (document: PatientDocumentSummary) => {
@@ -4514,25 +4540,21 @@ function PatientPage({
     try {
       const blob = await dataClient.downloadPatientDocument(document.id);
       const url = URL.createObjectURL(blob);
-      const printWindow = window.open("", "_blank", "noopener,noreferrer");
-      if (!printWindow) {
-        window.alert("Popup blocked. Allow popups to print documents.");
-        URL.revokeObjectURL(url);
-        return;
-      }
-      printWindow.document.write(
-        `<html><head><title>${document.original_filename.replace(/"/g, "")}</title></head>` +
-        `<body style="margin:0"><iframe id="pdf" src="${url}" style="border:0;width:100vw;height:100vh"></iframe></body></html>`
-      );
-      printWindow.document.close();
-      printWindow.onload = () => {
-        printWindow.focus();
-        printWindow.print();
-      };
+      printBlobUrl(url);
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      console.error("Unable to print patient document:", error);
+      window.alert("Could not prepare that document for printing.");
     } finally {
       setDownloadingDocumentId(null);
     }
+  };
+
+  const closeDocumentPreview = () => {
+    setDocumentPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
   };
 
   const formatDocumentSize = (value: number | string) => {
@@ -4731,6 +4753,10 @@ function PatientPage({
   useEffect(() => {
     setSelectedDocumentIds([]);
   }, [documentsPath, documentsSearch, documentsSort]);
+
+  useEffect(() => () => {
+    if (documentPreview) URL.revokeObjectURL(documentPreview.url);
+  }, [documentPreview]);
 
   return (
     <div className="patientWrap">
@@ -5279,6 +5305,35 @@ function PatientPage({
           onSave={(vals) => onUpdateRosterDetails({ drugOfChoice: vals.length ? vals : undefined })}
           onClose={() => setShowDocModal(false)}
         />
+      )}
+      {documentPreview && (
+        <div
+          className="modalOverlay"
+          onClick={closeDocumentPreview}
+        >
+          <div
+            className="modalCard"
+            style={{ width: "min(1120px, 96vw)", maxHeight: "92vh", display: "grid", gridTemplateRows: "auto 1fr" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modalHead">
+              <div className="modalTitle">Document Preview: {documentPreview.fileName}</div>
+              <button
+                className="modalClose"
+                onClick={closeDocumentPreview}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modalBody" style={{ padding: 0, overflow: "hidden" }}>
+              <iframe
+                src={documentPreview.url}
+                title={documentPreview.fileName}
+                style={{ width: "100%", height: "78vh", border: "0" }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
