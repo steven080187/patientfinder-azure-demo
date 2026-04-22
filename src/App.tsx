@@ -1329,6 +1329,12 @@ export default function App() {
   const [showNotificationComposer, setShowNotificationComposer] = useState(false);
   const [replyTarget, setReplyTarget] = useState<{ notificationId: string; patientName: string; title: string } | null>(null);
   const [highlightTarget, setHighlightTarget] = useState<{ patientId: string; patientName: string } | null>(null);
+  const [caseAssignmentTarget, setCaseAssignmentTarget] = useState<{
+    patientId: string;
+    patientName: string;
+    currentCounselorEmail: string;
+  } | null>(null);
+  const [highlightedPatientIds, setHighlightedPatientIds] = useState<Record<string, true>>({});
   const [counselorThinList, setCounselorThinList] = useState(false);
   const [patientDocumentsTabActive, setPatientDocumentsTabActive] = useState(false);
   const [privacyLocked, setPrivacyLocked] = useState(true);
@@ -1500,6 +1506,46 @@ export default function App() {
   const counselorId = activeUserId;
   const counselorLabel = activeUserEmail?.split("@")[0] ?? "My";
   const counselorThinListStorageKey = `patientfinder.thinlist.${activeUserId}`;
+  const counselorAssignmentOptions = useMemo(() => {
+    const optionMap = new Map<string, { email: string; label: string; userId?: string }>();
+    const pushOption = (option: { email: string; label: string; userId?: string }) => {
+      const normalizedEmail = option.email.trim().toLowerCase();
+      if (!normalizedEmail) return;
+      if (optionMap.has(normalizedEmail)) return;
+      optionMap.set(normalizedEmail, {
+        email: normalizedEmail,
+        label: option.label,
+        userId: option.userId ? option.userId.toLowerCase() : undefined,
+      });
+    };
+
+    if (activeUserEmail) {
+      pushOption({
+        email: activeUserEmail,
+        label: `${activeAuthUser?.name || activeUserEmail} (You)`,
+        userId: counselorId,
+      });
+    }
+
+    azureDemoUsers
+      .filter((user) => user.roles.includes("Counselor") || user.roles.includes("Admin"))
+      .forEach((user) => {
+        pushOption({
+          email: user.email,
+          label: user.name ? `${user.name} (${user.email})` : user.email,
+          userId: user.id,
+        });
+      });
+
+    teammateEmails.forEach((email) => {
+      pushOption({
+        email,
+        label: email,
+      });
+    });
+
+    return [...optionMap.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [activeAuthUser?.name, activeUserEmail, azureDemoUsers, counselorId, teammateEmails]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1714,8 +1760,7 @@ export default function App() {
         createdAt: row.created_at,
       }))
     );
-    setNotifications(
-      notificationsRows.map((row) => ({
+    const mappedNotifications = notificationsRows.map((row) => ({
         id: row.id,
         title: row.title,
         message: row.message,
@@ -1726,8 +1771,15 @@ export default function App() {
         senderEmail: row.sender_email ?? undefined,
         createdAt: row.created_at,
         readAt: row.read_at ?? undefined,
-      }))
-    );
+      }));
+    setNotifications(mappedNotifications);
+    const nextHighlightedPatientIds: Record<string, true> = {};
+    mappedNotifications.forEach((note) => {
+      if (note.patientId && !note.readAt && /^Patient highlight:/i.test(note.title)) {
+        nextHighlightedPatientIds[note.patientId] = true;
+      }
+    });
+    setHighlightedPatientIds((current) => ({ ...current, ...nextHighlightedPatientIds }));
     setGroupSessions(groupRows);
     setLoadingPatients(false);
   });
@@ -2238,30 +2290,48 @@ export default function App() {
     debugPatientFlow,
   ]);
 
-  const toggleCaseAssignment = async (patientId: string) => {
-    if (caseAssignments[patientId] === counselorId) {
-      await dataClient.clearCaseAssignment(patientId);
-      setCaseAssignments((prev) => {
-        const next = { ...prev };
-        delete next[patientId];
-        return next;
-      });
-      setCaseAssignmentEmails((prev) => {
-        const next = { ...prev };
-        delete next[patientId];
-        return next;
-      });
-      return;
-    }
+  const clearCaseAssignment = async (patientId: string) => {
+    await dataClient.clearCaseAssignment(patientId);
+    setCaseAssignments((prev) => {
+      const next = { ...prev };
+      delete next[patientId];
+      return next;
+    });
+    setCaseAssignmentEmails((prev) => {
+      const next = { ...prev };
+      delete next[patientId];
+      return next;
+    });
+  };
+
+  const assignCaseToCounselor = async (patientId: string, counselorEmail: string) => {
+    const normalizedEmail = counselorEmail.trim().toLowerCase();
+    if (!normalizedEmail) return;
+    const selected = counselorAssignmentOptions.find((option) => option.email === normalizedEmail);
+    const assignedCounselorId =
+      normalizedEmail === activeUserEmail.toLowerCase()
+        ? counselorId
+        : (selected?.userId ?? normalizedEmail);
 
     await dataClient.saveCaseAssignment(patientId, {
-      counselor_user_id: activeUserId,
-      counselor_email: activeUserEmail || null,
+      counselor_user_id: assignedCounselorId,
+      counselor_email: normalizedEmail,
     });
-    setCaseAssignments((prev) => ({ ...prev, [patientId]: counselorId }));
-    if (activeUserEmail) {
-      setCaseAssignmentEmails((prev) => ({ ...prev, [patientId]: activeUserEmail.toLowerCase() }));
-    }
+    setCaseAssignments((prev) => ({ ...prev, [patientId]: assignedCounselorId }));
+    setCaseAssignmentEmails((prev) => ({ ...prev, [patientId]: normalizedEmail }));
+  };
+
+  const openCaseAssignmentModal = (patientId: string) => {
+    const patient = patients.find((row) => row.id === patientId) ?? patientDetail;
+    if (!patient) return;
+    const assignedEmail =
+      caseAssignmentEmails[patientId] ??
+      (caseAssignments[patientId]?.includes("@") ? caseAssignments[patientId] : "");
+    setCaseAssignmentTarget({
+      patientId,
+      patientName: patient.displayName,
+      currentCounselorEmail: assignedEmail,
+    });
   };
 
   const updateCompliance = async (patientId: string, patch: Partial<PatientCompliance>) => {
@@ -2336,6 +2406,13 @@ export default function App() {
   const openPatientHighlightComposer = (patientId: string) => {
     const patient = patients.find((entry) => entry.id === patientId);
     if (!patient) return;
+    const assignedEmail =
+      caseAssignmentEmails[patientId] ??
+      (caseAssignments[patientId]?.includes("@") ? caseAssignments[patientId] : "");
+    if (!assignedEmail) {
+      window.alert("Assign this case to a counselor first, then send a highlight note.");
+      return;
+    }
     setHighlightTarget({ patientId: patient.id, patientName: patient.displayName });
   };
 
@@ -2356,19 +2433,31 @@ export default function App() {
     const patient = patients.find((entry) => entry.id === payload.patientId);
     if (!patient) return false;
 
-    return sendNotification({
+    const sent = await sendNotification({
       recipientEmail: assignedEmail,
       patientId: payload.patientId,
       title: `Patient highlight: ${patient.displayName}`,
       message: payload.message,
       priority: payload.priority,
     });
+    if (sent) {
+      setHighlightedPatientIds((prev) => ({ ...prev, [payload.patientId]: true }));
+    }
+    return sent;
   };
 
   const dismissNotification = async (notificationId: string) => {
+    const dismissed = notifications.find((note) => note.id === notificationId);
     await dataClient.markNotificationRead(notificationId);
     const now = new Date().toISOString();
     setNotifications((prev) => prev.map((note) => (note.id === notificationId ? { ...note, readAt: note.readAt ?? now } : note)));
+    if (dismissed?.patientId) {
+      setHighlightedPatientIds((prev) => {
+        const next = { ...prev };
+        delete next[dismissed.patientId!];
+        return next;
+      });
+    }
   };
 
   const replyToNotification = async (notificationId: string, message: string) => {
@@ -3228,6 +3317,7 @@ export default function App() {
                         selected={selected}
                         canHighlightPatient={hasAdminRole}
                         isAdminView={hasAdminRole || counselorThinList}
+                        highlightedPatientIds={highlightedPatientIds}
                         onHighlightPatient={openPatientHighlightComposer}
                       />
                     </div>
@@ -3325,6 +3415,27 @@ export default function App() {
             }}
           />
         )}
+        {caseAssignmentTarget ? (
+          <CaseAssignmentModal
+            patientName={caseAssignmentTarget.patientName}
+            currentCounselorEmail={caseAssignmentTarget.currentCounselorEmail}
+            counselorOptions={counselorAssignmentOptions}
+            onClose={() => setCaseAssignmentTarget(null)}
+            onSave={async (payload) => {
+              try {
+                if (!payload.counselorEmail) {
+                  await clearCaseAssignment(caseAssignmentTarget.patientId);
+                } else {
+                  await assignCaseToCounselor(caseAssignmentTarget.patientId, payload.counselorEmail);
+                }
+                setCaseAssignmentTarget(null);
+              } catch (error) {
+                console.error("Unable to update case assignment:", error);
+                window.alert("Could not update case assignment right now.");
+              }
+            }}
+          />
+        ) : null}
         {showNotificationComposer && hasAdminRole && (
           <NotificationComposerModal
             recipients={teammateEmails}
@@ -3511,9 +3622,15 @@ export default function App() {
             allSessions={sessions}
             dataClient={dataClient}
             counselorId={counselorId}
-            isAssigned={caseAssignments[p.id] === counselorId}
+            hasAssignment={Boolean(caseAssignments[p.id] || caseAssignmentEmails[p.id])}
+            isAssignedToMe={caseAssignments[p.id] === counselorId}
+            assignedCounselorEmail={
+              caseAssignmentEmails[p.id] ??
+              (caseAssignments[p.id]?.includes("@") ? caseAssignments[p.id] : "")
+            }
             compliance={complianceByPatient[p.id]}
-            onToggleAssignment={() => toggleCaseAssignment(p.id)}
+            onAssignCase={() => openCaseAssignmentModal(p.id)}
+            onClearAssignment={() => void clearCaseAssignment(p.id)}
             onUpdateCompliance={(patch) => updateCompliance(p.id, patch)}
             onUpdateRosterDetails={(patch) => updateRosterDetails(p.id, patch)}
             onUpdatePatient={(next) => {
@@ -3654,6 +3771,7 @@ function SearchResults({
   selected,
   canHighlightPatient,
   isAdminView,
+  highlightedPatientIds,
   onHighlightPatient,
 }: {
   view: ViewMode;
@@ -3671,6 +3789,7 @@ function SearchResults({
   selected?: Patient;
   canHighlightPatient: boolean;
   isAdminView: boolean;
+  highlightedPatientIds: Record<string, true>;
   onHighlightPatient: (patientId: string) => void;
 }) {
   const weekDate = todayIso();
@@ -3699,7 +3818,11 @@ function SearchResults({
               return (
                 <button
                   key={p.id}
-                  className={p.id === selectedId ? "workspaceMobilePatientCard selected" : "workspaceMobilePatientCard"}
+                  className={
+                    p.id === selectedId
+                      ? `workspaceMobilePatientCard selected${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                      : `workspaceMobilePatientCard${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                  }
                   onClick={() => {
                     onSelect(p.id);
                     onOpen(p.id);
@@ -3767,7 +3890,11 @@ function SearchResults({
               return (
                 <button
                   key={p.id}
-                  className={p.id === selectedId ? "workspaceSplitRow selected" : "workspaceSplitRow"}
+                  className={
+                    p.id === selectedId
+                      ? `workspaceSplitRow selected${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                      : `workspaceSplitRow${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                  }
                   onClick={() => onSelect(p.id)}
                   onDoubleClick={() => onOpen(p.id)}
                   title="Double-click to open"
@@ -3869,7 +3996,11 @@ function SearchResults({
               return (
                 <button
                   key={p.id}
-                  className={p.id === selectedId ? `workspaceSheetRow ${rowTone} selected` : `workspaceSheetRow ${rowTone}`}
+                  className={
+                    p.id === selectedId
+                      ? `workspaceSheetRow ${rowTone} selected${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                      : `workspaceSheetRow ${rowTone}${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                  }
                   onClick={() => onSelect(p.id)}
                   onDoubleClick={() => onOpen(p.id)}
                   title="Double-click to open"
@@ -3994,7 +4125,11 @@ function SearchResults({
       {rows.map((p) => (
         <button
           key={p.id}
-          className={p.id === selectedId ? "workspaceRosterTile selected" : "workspaceRosterTile"}
+          className={
+            p.id === selectedId
+              ? `workspaceRosterTile selected${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+              : `workspaceRosterTile${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+          }
           onClick={() => onSelect(p.id)}
           onDoubleClick={() => onOpen(p.id)}
           title="Double-click to open"
@@ -4033,6 +4168,77 @@ function SearchResults({
 }
 
 /* -------------------- Theme Picker -------------------- */
+
+function CaseAssignmentModal({
+  patientName,
+  currentCounselorEmail,
+  counselorOptions,
+  onClose,
+  onSave,
+}: {
+  patientName: string;
+  currentCounselorEmail: string;
+  counselorOptions: { email: string; label: string; userId?: string }[];
+  onClose: () => void;
+  onSave: (payload: { counselorEmail: string | null }) => Promise<void>;
+}) {
+  const [selectedEmail, setSelectedEmail] = useState(currentCounselorEmail || "");
+  const [customEmail, setCustomEmail] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+        <div className="modalHead">
+          <div className="modalTitle">Assign Counselor</div>
+          <button className="modalClose" onClick={onClose}>✕</button>
+        </div>
+        <div className="modalBody">
+          <div className="workspaceAgendaMeta">Patient</div>
+          <div className="workspaceAgendaDetail">{patientName}</div>
+          <div className="addGrid" style={{ marginTop: 12 }}>
+            <label className="addField">
+              <span className="addLabel">Counselor</span>
+              <select className="select" value={selectedEmail} onChange={(e) => setSelectedEmail(e.target.value)}>
+                <option value="">Unassigned</option>
+                {counselorOptions.map((option) => (
+                  <option key={option.email} value={option.email}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="addField">
+              <span className="addLabel">Or enter counselor email</span>
+              <input
+                className="authInput"
+                type="email"
+                value={customEmail}
+                onChange={(e) => setCustomEmail(e.target.value)}
+                placeholder="counselor@yourorg.org"
+              />
+            </label>
+          </div>
+        </div>
+        <div className="modalFoot">
+          <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button
+            className="btn"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              const email = customEmail.trim() || selectedEmail.trim();
+              await onSave({ counselorEmail: email ? email.toLowerCase() : null });
+              setSaving(false);
+            }}
+          >
+            {saving ? "Saving..." : "Save Assignment"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function NotificationComposerModal({
   recipients,
@@ -4381,9 +4587,12 @@ function PatientPage({
   allSessions,
   dataClient,
   counselorId,
-  isAssigned,
+  hasAssignment,
+  isAssignedToMe,
+  assignedCounselorEmail,
   compliance,
-  onToggleAssignment,
+  onAssignCase,
+  onClearAssignment,
   onUpdateCompliance,
   onUpdateRosterDetails,
   onUpdatePatient,
@@ -4396,9 +4605,12 @@ function PatientPage({
   allSessions: Session[];
   dataClient: DataClient;
   counselorId: string;
-  isAssigned: boolean;
+  hasAssignment: boolean;
+  isAssignedToMe: boolean;
+  assignedCounselorEmail?: string;
   compliance?: PatientCompliance;
-  onToggleAssignment: () => void;
+  onAssignCase: () => void;
+  onClearAssignment: () => void;
   onUpdateCompliance: (patch: Partial<PatientCompliance>) => void;
   onUpdateRosterDetails: (patch: Partial<PatientRosterDetails>) => void;
   onUpdatePatient: (next: Patient) => void;
@@ -4915,9 +5127,14 @@ function PatientPage({
                   Highlight
                 </button>
               ) : null}
-              <button className={isAssigned ? "btn ghost btnCompact" : "btn ghost btnCompact"} onClick={onToggleAssignment}>
-                {isAssigned ? "Remove Case Assignment" : "Assign Case"}
+              <button className="btn ghost btnCompact" onClick={onAssignCase}>
+                {hasAssignment ? "Reassign Case" : "Assign Case"}
               </button>
+              {hasAssignment ? (
+                <button className="btn ghost btnCompact" onClick={onClearAssignment}>
+                  Remove Case Assignment
+                </button>
+              ) : null}
               <select
                 className="select"
                 value={patient.kind}
@@ -4970,9 +5187,15 @@ function PatientPage({
                     </div>
                   </div>
                   <div className="quickChecklist">
-                    <div className={`quickCheckItem ${isAssigned ? "good" : "neutral"}`}>
+                    <div className={`quickCheckItem ${hasAssignment ? "good" : "neutral"}`}>
                       <strong>Assignment</strong>
-                      <span>{isAssigned ? "Assigned to your case load" : "Not assigned to your case load"}</span>
+                      <span>
+                        {hasAssignment
+                          ? isAssignedToMe
+                            ? "Assigned to your case load"
+                            : `Assigned to ${assignedCounselorEmail ?? "another counselor"}`
+                          : "Not assigned yet"}
+                      </span>
                     </div>
                     <div className={`quickCheckItem ${getAttendanceTone(patient, allSessions, new Date().toISOString().slice(0, 10))}`}>
                       <strong>Attendance</strong>
@@ -4992,9 +5215,15 @@ function PatientPage({
 
               {overviewPane === "alerts" ? (
                 <div className="quickChecklist">
-                  <div className={`quickCheckItem ${isAssigned ? "good" : "neutral"}`}>
+                  <div className={`quickCheckItem ${hasAssignment ? "good" : "neutral"}`}>
                     <strong>Assignment</strong>
-                    <span>{isAssigned ? "On your case load" : "Not on your case load yet"}</span>
+                    <span>
+                      {hasAssignment
+                        ? isAssignedToMe
+                          ? "On your case load"
+                          : `Assigned to ${assignedCounselorEmail ?? "another counselor"}`
+                        : "Not assigned yet"}
+                    </span>
                   </div>
                   <div className={`quickCheckItem ${getAttendanceTone(patient, allSessions, new Date().toISOString().slice(0, 10))}`}>
                     <strong>Attendance</strong>
