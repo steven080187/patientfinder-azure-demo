@@ -3654,6 +3654,27 @@ export default function App() {
             </div>
           </div>
         )}
+        {caseAssignmentTarget ? (
+          <CaseAssignmentModal
+            patientName={caseAssignmentTarget.patientName}
+            currentCounselorEmail={caseAssignmentTarget.currentCounselorEmail}
+            counselorOptions={counselorAssignmentOptions}
+            onClose={() => setCaseAssignmentTarget(null)}
+            onSave={async (payload) => {
+              try {
+                if (!payload.counselorEmail) {
+                  await clearCaseAssignment(caseAssignmentTarget.patientId);
+                } else {
+                  await assignCaseToCounselor(caseAssignmentTarget.patientId, payload.counselorEmail);
+                }
+                setCaseAssignmentTarget(null);
+              } catch (error) {
+                console.error("Unable to update case assignment:", error);
+                window.alert("Could not update case assignment right now.");
+              }
+            }}
+          />
+        ) : null}
         <ThemePicker theme={theme} setTheme={applyTheme} />
       </div>
     );
