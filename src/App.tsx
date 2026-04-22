@@ -572,6 +572,24 @@ function getRequestErrorMessage(error: unknown, fallback: string) {
   return detail || fallback;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 function monthKey(iso: string) {
   return toDateOnly(iso)?.slice(0, 7) ?? todayIso().slice(0, 7);
 }
@@ -2435,7 +2453,11 @@ export default function App() {
       sender_email: activeUserEmail || null,
     };
 
-    await dataClient.createNotification(insertPayload);
+    await withTimeout(
+      dataClient.createNotification(insertPayload),
+      15000,
+      "Notification request timed out. Please try again."
+    );
     return true;
   };
 
@@ -2469,18 +2491,24 @@ export default function App() {
     const patient = patients.find((entry) => entry.id === payload.patientId);
     if (!patient) return false;
 
-    const sent = await sendNotification({
-      recipientEmail: assignedEmail,
-      patientId: payload.patientId,
-      title: `Patient highlight: ${patient.displayName}`,
-      message: payload.message,
-      priority: payload.priority,
-    });
-    if (sent) {
-      setHighlightedPatientIds((prev) => ({ ...prev, [payload.patientId]: true }));
-      window.alert(`Highlight sent to ${assignedEmail}.`);
+    try {
+      const sent = await sendNotification({
+        recipientEmail: assignedEmail,
+        patientId: payload.patientId,
+        title: `Patient highlight: ${patient.displayName}`,
+        message: payload.message,
+        priority: payload.priority,
+      });
+      if (sent) {
+        setHighlightedPatientIds((prev) => ({ ...prev, [payload.patientId]: true }));
+        window.alert(`Highlight sent to ${assignedEmail}.`);
+      }
+      return sent;
+    } catch (error) {
+      console.error("Unable to send highlight notification:", error);
+      window.alert(getRequestErrorMessage(error, "Could not send highlight right now. Please try again."));
+      return false;
     }
-    return sent;
   };
 
   const dismissNotification = async (notificationId: string) => {
@@ -4522,8 +4550,11 @@ function PatientHighlightModal({
             disabled={sending || !message.trim()}
             onClick={async () => {
               setSending(true);
-              await onSend({ message: message.trim(), priority });
-              setSending(false);
+              try {
+                await onSend({ message: message.trim(), priority });
+              } finally {
+                setSending(false);
+              }
             }}
           >
             {sending ? "Sending..." : "Send highlight"}
