@@ -2291,7 +2291,8 @@ export default function App() {
   ]);
 
   const clearCaseAssignment = async (patientId: string) => {
-    await dataClient.clearCaseAssignment(patientId);
+    const previousAssigned = caseAssignments[patientId];
+    const previousEmail = caseAssignmentEmails[patientId];
     setCaseAssignments((prev) => {
       const next = { ...prev };
       delete next[patientId];
@@ -2302,6 +2303,17 @@ export default function App() {
       delete next[patientId];
       return next;
     });
+    try {
+      await dataClient.clearCaseAssignment(patientId);
+    } catch (error) {
+      setCaseAssignments((prev) =>
+        previousAssigned ? { ...prev, [patientId]: previousAssigned } : prev
+      );
+      setCaseAssignmentEmails((prev) =>
+        previousEmail ? { ...prev, [patientId]: previousEmail } : prev
+      );
+      throw error;
+    }
   };
 
   const assignCaseToCounselor = async (patientId: string, counselorEmail: string) => {
@@ -2313,12 +2325,36 @@ export default function App() {
         ? counselorId
         : (selected?.userId ?? normalizedEmail);
 
-    await dataClient.saveCaseAssignment(patientId, {
-      counselor_user_id: assignedCounselorId,
-      counselor_email: normalizedEmail,
-    });
+    const previousAssigned = caseAssignments[patientId];
+    const previousEmail = caseAssignmentEmails[patientId];
     setCaseAssignments((prev) => ({ ...prev, [patientId]: assignedCounselorId }));
     setCaseAssignmentEmails((prev) => ({ ...prev, [patientId]: normalizedEmail }));
+    try {
+      await dataClient.saveCaseAssignment(patientId, {
+        counselor_user_id: assignedCounselorId,
+        counselor_email: normalizedEmail,
+      });
+    } catch (error) {
+      setCaseAssignments((prev) => {
+        const next = { ...prev };
+        if (previousAssigned) {
+          next[patientId] = previousAssigned;
+        } else {
+          delete next[patientId];
+        }
+        return next;
+      });
+      setCaseAssignmentEmails((prev) => {
+        const next = { ...prev };
+        if (previousEmail) {
+          next[patientId] = previousEmail;
+        } else {
+          delete next[patientId];
+        }
+        return next;
+      });
+      throw error;
+    }
   };
 
   const openCaseAssignmentModal = (patientId: string) => {
@@ -3658,7 +3694,13 @@ export default function App() {
               setRoute({ name: "home" });
             }}
             canHighlightPatient={hasAdminRole}
-            onHighlightPatient={() => openPatientHighlightComposer(p.id)}
+            onSendHighlight={async ({ message, priority }) =>
+              sendPatientHighlight({
+                patientId: p.id,
+                message,
+                priority,
+              })
+            }
             onDocumentsTabActiveChange={setPatientDocumentsTabActive}
           />
         ) : (
@@ -3687,6 +3729,20 @@ export default function App() {
                 console.error("Unable to update case assignment:", error);
                 window.alert("Could not update case assignment right now.");
               }
+            }}
+          />
+        ) : null}
+        {highlightTarget && hasAdminRole ? (
+          <PatientHighlightModal
+            patientName={highlightTarget.patientName}
+            onClose={() => setHighlightTarget(null)}
+            onSend={async ({ message, priority }) => {
+              const ok = await sendPatientHighlight({
+                patientId: highlightTarget.patientId,
+                message,
+                priority,
+              });
+              if (ok) setHighlightTarget(null);
             }}
           />
         ) : null}
@@ -4623,7 +4679,7 @@ function PatientPage({
   onUpdatePatient,
   onDeletePatient,
   canHighlightPatient,
-  onHighlightPatient,
+  onSendHighlight,
   onDocumentsTabActiveChange,
 }: {
   patient: Patient;
@@ -4641,7 +4697,7 @@ function PatientPage({
   onUpdatePatient: (next: Patient) => void;
   onDeletePatient: () => void;
   canHighlightPatient: boolean;
-  onHighlightPatient: () => void;
+  onSendHighlight: (payload: { message: string; priority: "normal" | "urgent" }) => Promise<boolean>;
   onDocumentsTabActiveChange?: (active: boolean) => void;
 }) {
   const [tab, setTab] = useState<"overview" | "documents" | "intake" | "snap" | "health" | "consents" | "attendance">("overview");
@@ -4658,6 +4714,7 @@ function PatientPage({
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [documentsBusy, setDocumentsBusy] = useState(false);
   const [documentPreview, setDocumentPreview] = useState<{ url: string; fileName: string } | null>(null);
+  const [showHighlightModal, setShowHighlightModal] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
   const [programSaving, setProgramSaving] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
@@ -5148,7 +5205,7 @@ function PatientPage({
             </div>
             <div className="patientHeroActions">
               {canHighlightPatient ? (
-                <button className="btn ghost btnCompact" onClick={onHighlightPatient}>
+                <button className="btn ghost btnCompact" onClick={() => setShowHighlightModal(true)}>
                   Highlight
                 </button>
               ) : null}
@@ -5699,6 +5756,18 @@ function PatientPage({
           onClose={() => setShowDocModal(false)}
         />
       )}
+      {showHighlightModal && canHighlightPatient ? (
+        <PatientHighlightModal
+          patientName={patient.displayName}
+          onClose={() => setShowHighlightModal(false)}
+          onSend={async ({ message, priority }) => {
+            const ok = await onSendHighlight({ message, priority });
+            if (ok) {
+              setShowHighlightModal(false);
+            }
+          }}
+        />
+      ) : null}
       {documentPreview && (
         <div
           className="modalOverlay"
