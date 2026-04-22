@@ -590,6 +590,19 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string)
   });
 }
 
+function buildHighlightMap(notes: InAppNotification[]) {
+  const map: Record<string, "normal" | "urgent"> = {};
+  notes.forEach((note) => {
+    if (!note.patientId || note.readAt || !/^Patient highlight:/i.test(note.title)) return;
+    const nextPriority = note.priority === "urgent" ? "urgent" : "normal";
+    const current = map[note.patientId];
+    if (!current || nextPriority === "urgent") {
+      map[note.patientId] = nextPriority;
+    }
+  });
+  return map;
+}
+
 function monthKey(iso: string) {
   return toDateOnly(iso)?.slice(0, 7) ?? todayIso().slice(0, 7);
 }
@@ -1352,7 +1365,7 @@ export default function App() {
     patientName: string;
     currentCounselorEmail: string;
   } | null>(null);
-  const [highlightedPatientIds, setHighlightedPatientIds] = useState<Record<string, true>>({});
+  const [highlightedPatientIds, setHighlightedPatientIds] = useState<Record<string, "normal" | "urgent">>({});
   const [counselorThinList, setCounselorThinList] = useState(false);
   const [patientDocumentsTabActive, setPatientDocumentsTabActive] = useState(false);
   const [privacyLocked, setPrivacyLocked] = useState(true);
@@ -1791,13 +1804,7 @@ export default function App() {
         readAt: row.read_at ?? undefined,
       }));
     setNotifications(mappedNotifications);
-    const nextHighlightedPatientIds: Record<string, true> = {};
-    mappedNotifications.forEach((note) => {
-      if (note.patientId && !note.readAt && /^Patient highlight:/i.test(note.title)) {
-        nextHighlightedPatientIds[note.patientId] = true;
-      }
-    });
-    setHighlightedPatientIds((current) => ({ ...current, ...nextHighlightedPatientIds }));
+    setHighlightedPatientIds(buildHighlightMap(mappedNotifications));
     setGroupSessions(groupRows);
     setLoadingPatients(false);
   });
@@ -2500,7 +2507,10 @@ export default function App() {
         priority: payload.priority,
       });
       if (sent) {
-        setHighlightedPatientIds((prev) => ({ ...prev, [payload.patientId]: true }));
+        setHighlightedPatientIds((prev) => ({
+          ...prev,
+          [payload.patientId]: payload.priority === "urgent" ? "urgent" : "normal",
+        }));
         window.alert(`Highlight sent to ${assignedEmail}.`);
       }
       return sent;
@@ -2512,17 +2522,13 @@ export default function App() {
   };
 
   const dismissNotification = async (notificationId: string) => {
-    const dismissed = notifications.find((note) => note.id === notificationId);
     await dataClient.markNotificationRead(notificationId);
     const now = new Date().toISOString();
-    setNotifications((prev) => prev.map((note) => (note.id === notificationId ? { ...note, readAt: note.readAt ?? now } : note)));
-    if (dismissed?.patientId) {
-      setHighlightedPatientIds((prev) => {
-        const next = { ...prev };
-        delete next[dismissed.patientId!];
-        return next;
-      });
-    }
+    setNotifications((prev) => {
+      const next = prev.map((note) => (note.id === notificationId ? { ...note, readAt: note.readAt ?? now } : note));
+      setHighlightedPatientIds(buildHighlightMap(next));
+      return next;
+    });
   };
 
   const replyToNotification = async (notificationId: string, message: string) => {
@@ -3909,12 +3915,18 @@ function SearchResults({
   selected?: Patient;
   canHighlightPatient: boolean;
   isAdminView: boolean;
-  highlightedPatientIds: Record<string, true>;
+  highlightedPatientIds: Record<string, "normal" | "urgent">;
   onHighlightPatient: (patientId: string) => void;
 }) {
   const weekDate = todayIso();
   const [docEditor, setDocEditor] = useState<{ patientId: string; current: string[] } | null>(null);
   const sheetScrollRef = useRef<HTMLDivElement | null>(null);
+  const getHighlightClass = (patientId: string) => {
+    const value = highlightedPatientIds[patientId];
+    if (value === "urgent") return " highlightRingUrgent";
+    if (value === "normal") return " highlightRingNormal";
+    return "";
+  };
 
   if (isMobile && view === "cards") {
     return (
@@ -3940,8 +3952,8 @@ function SearchResults({
                   key={p.id}
                   className={
                     p.id === selectedId
-                      ? `workspaceMobilePatientCard selected${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
-                      : `workspaceMobilePatientCard${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                      ? `workspaceMobilePatientCard selected${getHighlightClass(p.id)}`
+                      : `workspaceMobilePatientCard${getHighlightClass(p.id)}`
                   }
                   onClick={() => {
                     onSelect(p.id);
@@ -4012,8 +4024,8 @@ function SearchResults({
                   key={p.id}
                   className={
                     p.id === selectedId
-                      ? `workspaceSplitRow selected${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
-                      : `workspaceSplitRow${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                      ? `workspaceSplitRow selected${getHighlightClass(p.id)}`
+                      : `workspaceSplitRow${getHighlightClass(p.id)}`
                   }
                   onClick={() => onSelect(p.id)}
                   onDoubleClick={() => onOpen(p.id)}
@@ -4118,8 +4130,8 @@ function SearchResults({
                   key={p.id}
                   className={
                     p.id === selectedId
-                      ? `workspaceSheetRow ${rowTone} selected${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
-                      : `workspaceSheetRow ${rowTone}${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+                      ? `workspaceSheetRow ${rowTone} selected${getHighlightClass(p.id)}`
+                      : `workspaceSheetRow ${rowTone}${getHighlightClass(p.id)}`
                   }
                   onClick={() => onSelect(p.id)}
                   onDoubleClick={() => onOpen(p.id)}
@@ -4247,8 +4259,8 @@ function SearchResults({
           key={p.id}
           className={
             p.id === selectedId
-              ? `workspaceRosterTile selected${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
-              : `workspaceRosterTile${highlightedPatientIds[p.id] ? " highlightRing" : ""}`
+              ? `workspaceRosterTile selected${getHighlightClass(p.id)}`
+              : `workspaceRosterTile${getHighlightClass(p.id)}`
           }
           onClick={() => onSelect(p.id)}
           onDoubleClick={() => onOpen(p.id)}

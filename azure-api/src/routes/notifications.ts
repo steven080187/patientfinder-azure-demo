@@ -24,7 +24,7 @@ notificationsRouter.post("/api/notifications", requireAuth, requireAnyRole("Admi
 
     await query(
       `insert into public.in_app_notifications (
-          id, title, message, priority, patient_id, recipient_email, recipient_user_id, sender_email, created_by
+          id, title, message, priority, patient_id, recipient_email, recipient_user_id, sender_user_id, sender_email
         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [
         req.body.id ?? randomUUID(),
@@ -34,8 +34,8 @@ notificationsRouter.post("/api/notifications", requireAuth, requireAnyRole("Admi
         patientId,
         recipientEmail,
         req.body.recipient_user_id ?? null,
-        req.body.sender_email ?? user?.email ?? null,
         user?.id ?? null,
+        req.body.sender_email ?? user?.email ?? null,
       ]
     );
 
@@ -137,7 +137,7 @@ notificationsRouter.post("/api/notifications/:notificationId/reply", requireAuth
 
     await query(
       `insert into public.in_app_notifications (
-          id, title, message, priority, patient_id, recipient_email, recipient_user_id, sender_email, created_by
+          id, title, message, priority, patient_id, recipient_email, recipient_user_id, sender_user_id, sender_email
         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [
         randomUUID(),
@@ -147,8 +147,8 @@ notificationsRouter.post("/api/notifications/:notificationId/reply", requireAuth
         original.patient_id,
         replyRecipientEmail,
         null,
-        user.email.toLowerCase(),
         user.id,
+        user.email.toLowerCase(),
       ]
     );
 

@@ -1373,10 +1373,44 @@
   background: var(--bg-row-active);
 }
 
-.highlightRing {
+.highlightRingNormal {
   box-shadow:
     0 0 0 2px rgba(255, 204, 41, 0.95),
     0 0 0 5px rgba(255, 204, 41, 0.18);
+  animation: highlightPulseNormal 2.2s ease-in-out infinite;
+}
+
+.highlightRingUrgent {
+  box-shadow:
+    0 0 0 2px rgba(232, 74, 74, 0.96),
+    0 0 0 6px rgba(232, 74, 74, 0.2);
+  animation: highlightPulseUrgent 1.55s ease-in-out infinite;
+}
+
+@keyframes highlightPulseNormal {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px rgba(255, 204, 41, 0.95),
+      0 0 0 4px rgba(255, 204, 41, 0.14);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px rgba(255, 204, 41, 1),
+      0 0 0 8px rgba(255, 204, 41, 0.28);
+  }
+}
+
+@keyframes highlightPulseUrgent {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px rgba(232, 74, 74, 0.96),
+      0 0 0 5px rgba(232, 74, 74, 0.16);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px rgba(232, 74, 74, 1),
+      0 0 0 10px rgba(232, 74, 74, 0.34);
+  }
 }
 
 .workspaceSplitIdentity,
