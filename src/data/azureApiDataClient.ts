@@ -11,6 +11,7 @@ import type {
 } from "./types";
 
 let accessTokenProvider: (() => Promise<string | null> | string | null) | null = null;
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
 const debugPatientFlow =
   String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "1" ||
   String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "true" ||
@@ -50,6 +51,15 @@ async function toRequestError(response: Response) {
 }
 
 async function requestJson<T>(path: string): Promise<T> {
+  const dedupeEligible = path.startsWith("/api/patients") || path === "/api/groups";
+  if (dedupeEligible) {
+    const existing = inFlightGetRequests.get(path);
+    if (existing) {
+      return existing as Promise<T>;
+    }
+  }
+
+  const requestPromise = (async () => {
   const accessToken = accessTokenProvider ? await accessTokenProvider() : null;
   const requestUrl = `${getApiBaseUrl()}${path}`;
   if (debugPatientFlow && (path.startsWith("/api/patients") || path.startsWith("/api/dashboard"))) {
@@ -80,6 +90,18 @@ async function requestJson<T>(path: string): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+  })();
+
+  if (dedupeEligible) {
+    inFlightGetRequests.set(path, requestPromise as Promise<unknown>);
+    requestPromise.finally(() => {
+      if (inFlightGetRequests.get(path) === (requestPromise as Promise<unknown>)) {
+        inFlightGetRequests.delete(path);
+      }
+    });
+  }
+
+  return requestPromise;
 }
 
 async function requestBlob(path: string): Promise<Blob> {

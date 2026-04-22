@@ -1324,6 +1324,7 @@ export default function App() {
   const [showNotificationComposer, setShowNotificationComposer] = useState(false);
   const [replyTarget, setReplyTarget] = useState<{ notificationId: string; patientName: string; title: string } | null>(null);
   const [highlightTarget, setHighlightTarget] = useState<{ patientId: string; patientName: string } | null>(null);
+  const [patientDocumentsTabActive, setPatientDocumentsTabActive] = useState(false);
   const [privacyLocked, setPrivacyLocked] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileGlanceOpen, setMobileGlanceOpen] = useState(false);
@@ -1738,12 +1739,31 @@ export default function App() {
       setLiveGroupSuccess(null);
       setLiveGroupBusy(false);
       setLoadError(null);
+      setPatientDocumentsTabActive(false);
+      return;
+    }
+
+    if (route.name === "patient" && patientDocumentsTabActive) {
       return;
     }
 
     void loadDashboardData();
     void loadPatientDirectory();
-  }, [activeAuthUser, authReadyForApi, patientPage, qRaw, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, loadDashboardData, loadPatientDirectory]);
+  }, [
+    activeAuthUser,
+    authReadyForApi,
+    patientPage,
+    qRaw,
+    kindFilter,
+    sortKey,
+    sortDir,
+    forceRoster,
+    caseLoadOnly,
+    loadDashboardData,
+    loadPatientDirectory,
+    route.name,
+    patientDocumentsTabActive,
+  ]);
 
 
   const [theme, setThemeState] = useState<ThemeId>(() => {
@@ -3477,6 +3497,7 @@ export default function App() {
             }}
             canHighlightPatient={hasAdminRole}
             onHighlightPatient={() => openPatientHighlightComposer(p.id)}
+            onDocumentsTabActiveChange={setPatientDocumentsTabActive}
           />
         ) : (
           <div className="panel">
@@ -4339,6 +4360,7 @@ function PatientPage({
   onDeletePatient,
   canHighlightPatient,
   onHighlightPatient,
+  onDocumentsTabActiveChange,
 }: {
   patient: Patient;
   allSessions: Session[];
@@ -4353,6 +4375,7 @@ function PatientPage({
   onDeletePatient: () => void;
   canHighlightPatient: boolean;
   onHighlightPatient: () => void;
+  onDocumentsTabActiveChange?: (active: boolean) => void;
 }) {
   const [tab, setTab] = useState<"overview" | "documents" | "intake" | "snap" | "health" | "consents" | "attendance">("overview");
   const [overviewPane, setOverviewPane] = useState<"summary" | "alerts" | "roster" | "compliance">("summary");
@@ -4360,6 +4383,7 @@ function PatientPage({
   const [subLoading, setSubLoading] = useState(true);
   const [documents, setDocuments] = useState<PatientDocumentSummary[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [hasLoadedDocuments, setHasLoadedDocuments] = useState(false);
   const [downloadingDocumentId, setDownloadingDocumentId] = useState<string | null>(null);
   const [documentsPath, setDocumentsPath] = useState<string[]>([]);
   const [documentsSearch, setDocumentsSearch] = useState("");
@@ -4371,6 +4395,16 @@ function PatientPage({
   const [programSaving, setProgramSaving] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
 
+  useEffect(() => {
+    onDocumentsTabActiveChange?.(tab === "documents");
+    return () => onDocumentsTabActiveChange?.(false);
+  }, [tab, onDocumentsTabActiveChange]);
+
+  useEffect(() => {
+    setHasLoadedDocuments(false);
+    setDocuments([]);
+    setDocumentsLoading(true);
+  }, [patient.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4393,6 +4427,7 @@ function PatientPage({
   }, [dataClient, patient.id]);
 
   useEffect(() => {
+    if (tab !== "documents" && hasLoadedDocuments) return;
     let cancelled = false;
     setDocumentsLoading(true);
     dataClient
@@ -4400,17 +4435,19 @@ function PatientPage({
       .then((rows) => {
         if (cancelled) return;
         setDocuments(rows);
+        setHasLoadedDocuments(true);
         setDocumentsLoading(false);
       })
       .catch(() => {
         if (cancelled) return;
         setDocuments([]);
+        setHasLoadedDocuments(true);
         setDocumentsLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [dataClient, patient.id]);
+  }, [dataClient, patient.id, tab, hasLoadedDocuments]);
 
   const ans: IntakeAnswers | undefined = sub
     ? {
@@ -4619,14 +4656,10 @@ function PatientPage({
     return sorted;
   }, [docFolderEntries.files, docsSearchRaw, documentsSort]);
 
-  const refreshDocuments = async () => {
-    setDocumentsLoading(true);
-    try {
-      const rows = await dataClient.getPatientDocuments(patient.id);
-      setDocuments(rows);
-    } finally {
-      setDocumentsLoading(false);
-    }
+  const renameDocumentInState = (documentId: string, nextPath: string) => {
+    setDocuments((prev) =>
+      prev.map((row) => (row.id === documentId ? { ...row, original_filename: nextPath } : row))
+    );
   };
 
   const folderContainsDocument = (folderPath: string, doc: PatientDocumentSummary) => {
@@ -4642,8 +4675,16 @@ function PatientPage({
     const parent = normalizeDocumentPath(doc.original_filename || "").split("/").filter(Boolean).slice(0, -1).join("/");
     const nextPath = normalizeDocumentPath(parent ? `${parent}/${nextName}` : nextName);
     if (!nextPath) return;
-    await dataClient.renamePatientDocument(doc.id, { originalFileName: nextPath });
-    await refreshDocuments();
+    try {
+      renameDocumentInState(doc.id, nextPath);
+      const updated = await dataClient.renamePatientDocument(doc.id, { originalFileName: nextPath });
+      renameDocumentInState(doc.id, normalizeDocumentPath(updated.original_filename || nextPath));
+    } catch (error) {
+      renameDocumentInState(doc.id, doc.original_filename);
+      console.error("Unable to rename patient document:", error);
+      window.alert("Could not rename that file right now.");
+      return;
+    }
   };
 
   const moveDocument = async (doc: PatientDocumentSummary) => {
@@ -4657,15 +4698,31 @@ function PatientPage({
     const fileName = currentPath.split("/").pop() || doc.original_filename;
     const targetPath = normalizeDocumentPath(folderInput.trim() ? `${folderInput.trim()}/${fileName}` : fileName);
     if (!targetPath) return;
-    await dataClient.renamePatientDocument(doc.id, { originalFileName: targetPath });
-    await refreshDocuments();
+    try {
+      renameDocumentInState(doc.id, targetPath);
+      const updated = await dataClient.renamePatientDocument(doc.id, { originalFileName: targetPath });
+      renameDocumentInState(doc.id, normalizeDocumentPath(updated.original_filename || targetPath));
+    } catch (error) {
+      renameDocumentInState(doc.id, doc.original_filename);
+      console.error("Unable to move patient document:", error);
+      window.alert("Could not move that file right now.");
+      return;
+    }
   };
 
   const deleteDocument = async (doc: PatientDocumentSummary) => {
     const ok = window.confirm(`Delete document "${doc.original_filename}"? This cannot be undone.`);
     if (!ok) return;
-    await dataClient.deletePatientDocument(doc.id);
-    await refreshDocuments();
+    const snapshot = documents;
+    setDocuments((prev) => prev.filter((row) => row.id !== doc.id));
+    try {
+      await dataClient.deletePatientDocument(doc.id);
+    } catch (error) {
+      setDocuments(snapshot);
+      console.error("Unable to delete patient document:", error);
+      window.alert("Could not delete that file right now.");
+      return;
+    }
   };
 
   const renameFolder = async (folderPath: string) => {
@@ -4680,12 +4737,28 @@ function PatientPage({
     if (!impacted.length) return;
     setDocumentsBusy(true);
     try {
-      for (const doc of impacted) {
+      const renamePlan = impacted.map((doc) => {
         const current = normalizeDocumentPath(doc.original_filename);
-        const next = current.startsWith(`${folderPath}/`) ? `${nextFolderPath}/${current.slice(folderPath.length + 1)}` : current;
-        await dataClient.renamePatientDocument(doc.id, { originalFileName: next });
+        const nextPath = current.startsWith(`${folderPath}/`) ? `${nextFolderPath}/${current.slice(folderPath.length + 1)}` : current;
+        return {
+          documentId: doc.id,
+          previousPath: doc.original_filename,
+          nextPath,
+        };
+      });
+      renamePlan.forEach((item) => renameDocumentInState(item.documentId, item.nextPath));
+      const results = await Promise.allSettled(
+        renamePlan.map((item) => dataClient.renamePatientDocument(item.documentId, { originalFileName: item.nextPath }))
+      );
+      const failed = results.some((result) => result.status === "rejected");
+      if (failed) {
+        renamePlan.forEach((item) => renameDocumentInState(item.documentId, item.previousPath));
+        throw new Error("Some files could not be renamed.");
       }
-      await refreshDocuments();
+    } catch (error) {
+      console.error("Unable to rename folder:", error);
+      window.alert("Could not rename that folder right now.");
+      return;
     } finally {
       setDocumentsBusy(false);
     }
@@ -4698,10 +4771,19 @@ function PatientPage({
     if (!ok) return;
     setDocumentsBusy(true);
     try {
-      for (const doc of impacted) {
-        await dataClient.deletePatientDocument(doc.id);
+      const impactedIds = new Set(impacted.map((doc) => doc.id));
+      const snapshot = documents;
+      setDocuments((prev) => prev.filter((row) => !impactedIds.has(row.id)));
+      const results = await Promise.allSettled(impacted.map((doc) => dataClient.deletePatientDocument(doc.id)));
+      const failed = results.some((result) => result.status === "rejected");
+      if (failed) {
+        setDocuments(snapshot);
+        throw new Error("Some files could not be deleted.");
       }
-      await refreshDocuments();
+    } catch (error) {
+      console.error("Unable to delete folder:", error);
+      window.alert("Could not delete that folder right now.");
+      return;
     } finally {
       setDocumentsBusy(false);
     }
@@ -4711,17 +4793,33 @@ function PatientPage({
     if (!selectedDocumentIds.length) return;
     const folderInput = window.prompt("Move selected files to folder path (leave blank for root)", currentPathKey);
     if (folderInput === null) return;
+    const destinationFolder = folderInput.trim();
     setDocumentsBusy(true);
     try {
-      for (const docId of selectedDocumentIds) {
-        const doc = documents.find((row) => row.id === docId);
-        if (!doc) continue;
+      const selected = documents.filter((row) => selectedDocumentIds.includes(row.id));
+      const movePlan = selected.map((doc) => {
         const fileName = normalizeDocumentPath(doc.original_filename).split("/").pop() || doc.original_filename;
-        const nextPath = normalizeDocumentPath(folderInput.trim() ? `${folderInput.trim()}/${fileName}` : fileName);
-        await dataClient.renamePatientDocument(doc.id, { originalFileName: nextPath });
+        const nextPath = normalizeDocumentPath(destinationFolder ? `${destinationFolder}/${fileName}` : fileName);
+        return {
+          documentId: doc.id,
+          previousPath: doc.original_filename,
+          nextPath,
+        };
+      });
+      movePlan.forEach((item) => renameDocumentInState(item.documentId, item.nextPath));
+      const results = await Promise.allSettled(
+        movePlan.map((item) => dataClient.renamePatientDocument(item.documentId, { originalFileName: item.nextPath }))
+      );
+      const failed = results.some((result) => result.status === "rejected");
+      if (failed) {
+        movePlan.forEach((item) => renameDocumentInState(item.documentId, item.previousPath));
+        throw new Error("Some files could not be moved.");
       }
       setSelectedDocumentIds([]);
-      await refreshDocuments();
+    } catch (error) {
+      console.error("Unable to move selected documents:", error);
+      window.alert("Could not move all selected files.");
+      return;
     } finally {
       setDocumentsBusy(false);
     }
@@ -4733,11 +4831,22 @@ function PatientPage({
     if (!ok) return;
     setDocumentsBusy(true);
     try {
-      for (const docId of selectedDocumentIds) {
-        await dataClient.deletePatientDocument(docId);
+      const selectedIds = new Set(selectedDocumentIds);
+      const snapshot = documents;
+      setDocuments((prev) => prev.filter((row) => !selectedIds.has(row.id)));
+      const results = await Promise.allSettled(
+        selectedDocumentIds.map((docId) => dataClient.deletePatientDocument(docId))
+      );
+      const failed = results.some((result) => result.status === "rejected");
+      if (failed) {
+        setDocuments(snapshot);
+        throw new Error("Some files could not be deleted.");
       }
       setSelectedDocumentIds([]);
-      await refreshDocuments();
+    } catch (error) {
+      console.error("Unable to delete selected documents:", error);
+      window.alert("Could not delete all selected files.");
+      return;
     } finally {
       setDocumentsBusy(false);
     }
