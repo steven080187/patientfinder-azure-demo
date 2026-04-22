@@ -2442,6 +2442,7 @@ export default function App() {
     });
     if (sent) {
       setHighlightedPatientIds((prev) => ({ ...prev, [payload.patientId]: true }));
+      window.alert(`Highlight sent to ${assignedEmail}.`);
     }
     return sent;
   };
@@ -3473,6 +3474,20 @@ export default function App() {
             }}
           />
         ) : null}
+        {highlightTarget && hasAdminRole ? (
+          <PatientHighlightModal
+            patientName={highlightTarget.patientName}
+            onClose={() => setHighlightTarget(null)}
+            onSend={async ({ message, priority }) => {
+              const ok = await sendPatientHighlight({
+                patientId: highlightTarget.patientId,
+                message,
+                priority,
+              });
+              if (ok) setHighlightTarget(null);
+            }}
+          />
+        ) : null}
         <ThemePicker theme={theme} setTheme={applyTheme} />
       </div>
     );
@@ -4204,7 +4219,6 @@ function CaseAssignmentModal({
   onSave: (payload: { counselorEmail: string | null }) => Promise<void>;
 }) {
   const [selectedEmail, setSelectedEmail] = useState(currentCounselorEmail || "");
-  const [customEmail, setCustomEmail] = useState("");
   const [saving, setSaving] = useState(false);
 
   return (
@@ -4229,16 +4243,6 @@ function CaseAssignmentModal({
                 ))}
               </select>
             </label>
-            <label className="addField">
-              <span className="addLabel">Or enter counselor email</span>
-              <input
-                className="authInput"
-                type="email"
-                value={customEmail}
-                onChange={(e) => setCustomEmail(e.target.value)}
-                placeholder="counselor@yourorg.org"
-              />
-            </label>
           </div>
         </div>
         <div className="modalFoot">
@@ -4248,7 +4252,7 @@ function CaseAssignmentModal({
             disabled={saving}
             onClick={async () => {
               setSaving(true);
-              const email = customEmail.trim() || selectedEmail.trim();
+              const email = selectedEmail.trim();
               await onSave({ counselorEmail: email ? email.toLowerCase() : null });
               setSaving(false);
             }}
