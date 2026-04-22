@@ -12,6 +12,8 @@ import type {
 
 let accessTokenProvider: (() => Promise<string | null> | string | null) | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
+const DOCUMENT_BLOB_CACHE_TTL_MS = 2 * 60 * 1000;
+const documentBlobCache = new Map<string, { blob: Blob; expiresAt: number }>();
 const debugPatientFlow =
   String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "1" ||
   String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "true" ||
@@ -19,6 +21,10 @@ const debugPatientFlow =
 
 export function setAzureApiAccessTokenProvider(provider: typeof accessTokenProvider) {
   accessTokenProvider = provider;
+}
+
+export function clearAzureApiDocumentBlobCache() {
+  documentBlobCache.clear();
 }
 
 function getApiBaseUrl() {
@@ -60,36 +66,36 @@ async function requestJson<T>(path: string): Promise<T> {
   }
 
   const requestPromise = (async () => {
-  const accessToken = accessTokenProvider ? await accessTokenProvider() : null;
-  const requestUrl = `${getApiBaseUrl()}${path}`;
-  if (debugPatientFlow && (path.startsWith("/api/patients") || path.startsWith("/api/dashboard"))) {
-    console.info("[patient-flow][frontend][request]", {
-      path,
-      requestUrl,
-      hasAccessToken: Boolean(accessToken),
-      dataSource: "azure-api -> postgresql",
+    const accessToken = accessTokenProvider ? await accessTokenProvider() : null;
+    const requestUrl = `${getApiBaseUrl()}${path}`;
+    if (debugPatientFlow && (path.startsWith("/api/patients") || path.startsWith("/api/dashboard"))) {
+      console.info("[patient-flow][frontend][request]", {
+        path,
+        requestUrl,
+        hasAccessToken: Boolean(accessToken),
+        dataSource: "azure-api -> postgresql",
+      });
+    }
+    const response = await fetch(requestUrl, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
     });
-  }
-  const response = await fetch(requestUrl, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-  });
-  if (debugPatientFlow && (path.startsWith("/api/patients") || path.startsWith("/api/dashboard"))) {
-    console.info("[patient-flow][frontend][response]", {
-      path,
-      requestUrl,
-      status: response.status,
-      ok: response.ok,
-    });
-  }
+    if (debugPatientFlow && (path.startsWith("/api/patients") || path.startsWith("/api/dashboard"))) {
+      console.info("[patient-flow][frontend][response]", {
+        path,
+        requestUrl,
+        status: response.status,
+        ok: response.ok,
+      });
+    }
 
-  if (!response.ok) {
-    throw await toRequestError(response);
-  }
+    if (!response.ok) {
+      throw await toRequestError(response);
+    }
 
-  return response.json() as Promise<T>;
+    return response.json() as Promise<T>;
   })();
 
   if (dedupeEligible) {
@@ -274,13 +280,27 @@ export const azureApiDataClient: DataClient = {
     return payload.documents ?? [];
   },
   async downloadPatientDocument(documentId: string) {
-    return requestBlob(`/api/patient-documents/${documentId}/download`);
+    const cacheEntry = documentBlobCache.get(documentId);
+    if (cacheEntry && cacheEntry.expiresAt > Date.now()) {
+      return cacheEntry.blob;
+    }
+    if (cacheEntry) {
+      documentBlobCache.delete(documentId);
+    }
+
+    const blob = await requestBlob(`/api/patient-documents/${documentId}/download`);
+    documentBlobCache.set(documentId, {
+      blob,
+      expiresAt: Date.now() + DOCUMENT_BLOB_CACHE_TTL_MS,
+    });
+    return blob;
   },
   async renamePatientDocument(documentId: string, payload: { originalFileName: string }) {
     const response = await patchJson<{ document: PatientDocumentSummary }>(`/api/patient-documents/${documentId}`, payload);
     return response.document;
   },
   async deletePatientDocument(documentId: string) {
+    documentBlobCache.delete(documentId);
     await deleteJson(`/api/patient-documents/${documentId}`);
   },
   async createPatient(payload) {

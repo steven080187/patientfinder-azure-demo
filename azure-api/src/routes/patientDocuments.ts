@@ -407,6 +407,9 @@ patientDocumentsRouter.get(
       const blobMs = Date.now() - blobStartedAt;
 
       res.setHeader("Content-Type", document.content_type || file.contentType || "application/pdf");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       const downloadName = getDownloadSafeFileName(document.original_filename);
       res.setHeader(
         "Content-Disposition",

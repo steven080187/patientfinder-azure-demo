@@ -1,6 +1,11 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { getDataClient } from "./data/client";
-import { getAzureAuthOptions, loginToAzureDemo, setAzureApiAccessTokenProvider } from "./data/azureApiDataClient";
+import {
+  clearAzureApiDocumentBlobCache,
+  getAzureAuthOptions,
+  loginToAzureDemo,
+  setAzureApiAccessTokenProvider,
+} from "./data/azureApiDataClient";
 import { useAzureAuth } from "./auth/azureAuth";
 import type {
   AzureDemoUser,
@@ -1324,6 +1329,7 @@ export default function App() {
   const [showNotificationComposer, setShowNotificationComposer] = useState(false);
   const [replyTarget, setReplyTarget] = useState<{ notificationId: string; patientName: string; title: string } | null>(null);
   const [highlightTarget, setHighlightTarget] = useState<{ patientId: string; patientName: string } | null>(null);
+  const [counselorThinList, setCounselorThinList] = useState(false);
   const [patientDocumentsTabActive, setPatientDocumentsTabActive] = useState(false);
   const [privacyLocked, setPrivacyLocked] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -1493,6 +1499,18 @@ export default function App() {
   const expoGoInfoUrl = "https://expo.dev/go";
   const counselorId = activeUserId;
   const counselorLabel = activeUserEmail?.split("@")[0] ?? "My";
+  const counselorThinListStorageKey = `patientfinder.thinlist.${activeUserId}`;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem(counselorThinListStorageKey);
+    setCounselorThinList(saved === "1");
+  }, [counselorThinListStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(counselorThinListStorageKey, counselorThinList ? "1" : "0");
+  }, [counselorThinListStorageKey, counselorThinList]);
 
   const loadDashboardData = useEffectEvent(async () => {
     if (!authReadyForApi) {
@@ -2094,6 +2112,7 @@ export default function App() {
   };
 
   const logout = async () => {
+    clearAzureApiDocumentBlobCache();
     if (isEntraMode) {
       await azureAuth.logout();
       return;
@@ -2105,6 +2124,12 @@ export default function App() {
     setCaseLoadOnly(true);
     setPrivacyLocked(true);
   };
+
+  useEffect(() => {
+    const clearCache = () => clearAzureApiDocumentBlobCache();
+    window.addEventListener("beforeunload", clearCache);
+    return () => window.removeEventListener("beforeunload", clearCache);
+  }, []);
 
   const refreshPatients = async () => {
     await loadDashboardData();
@@ -3154,6 +3179,11 @@ export default function App() {
                           <button className="btn ghost" onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}>
                             {sortDir === "asc" ? "Ascending" : "Descending"}
                           </button>
+                          {hasCounselorRole && !hasAdminRole ? (
+                            <button className="btn ghost" onClick={() => setCounselorThinList((current) => !current)}>
+                              Thin list: {counselorThinList ? "On" : "Off"}
+                            </button>
+                          ) : null}
 
                           <div className="workspaceResultsCount">
                             {results.length} visible • {patientPageStart}-{patientPageEnd} of {patientTotal}
@@ -3197,7 +3227,7 @@ export default function App() {
                         onOpen={openPatient}
                         selected={selected}
                         canHighlightPatient={hasAdminRole}
-                        isAdminView={hasAdminRole}
+                        isAdminView={hasAdminRole || counselorThinList}
                         onHighlightPatient={openPatientHighlightComposer}
                       />
                     </div>
