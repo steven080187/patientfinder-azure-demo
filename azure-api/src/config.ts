@@ -25,6 +25,7 @@ const envSchema = z.object({
   AZURE_BLOB_CONNECTION_STRING: z.string().optional(),
   AZURE_BLOB_CONTAINER_NAME: z.string().default("patientfinder-documents"),
   AZURE_BLOB_BASE_PATH: z.string().default("patient-documents"),
+  AUDIT_LOG_SALT: z.string().default("patientfinder-audit-salt"),
 });
 
 export const env = envSchema.parse(process.env);

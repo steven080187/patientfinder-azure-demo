@@ -3,7 +3,9 @@ import express from "express";
 import helmet from "helmet";
 import path from "node:path";
 import { existsSync } from "node:fs";
+import { auditLog, ensureRequestId, hipaaHash, sanitizeRoutePath } from "./audit.js";
 import { env } from "./config.js";
+import { getRequestUser } from "./entraAuth.js";
 import { authRouter } from "./routes/auth.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { groupsRouter } from "./routes/groups.js";
@@ -42,6 +44,28 @@ export function createApp() {
     })
   );
   app.use(express.json({ limit: "20mb" }));
+
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    const requestId = ensureRequestId(req, res);
+
+    res.on("finish", () => {
+      if (!req.path.startsWith("/api/") && req.path !== "/health") return;
+      const actor = getRequestUser(req);
+      auditLog("http_request", {
+        requestId,
+        method: req.method,
+        route: sanitizeRoutePath(req.path),
+        statusCode: res.statusCode,
+        durationMs: Date.now() - startedAt,
+        actorHash: hipaaHash(actor?.email ?? actor?.id ?? null),
+        hasAuthHeader: Boolean(req.headers.authorization),
+        originHash: hipaaHash(req.headers.origin ?? null),
+      });
+    });
+
+    next();
+  });
 
   app.use(healthRouter);
   app.use(authRouter);
