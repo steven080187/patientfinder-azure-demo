@@ -190,7 +190,7 @@ patientsRouter.get("/api/patients/:id", requireAuth, requireAnyRole("Admin", "Co
   }
 });
 
-patientsRouter.post("/api/patients", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
+patientsRouter.post("/api/patients", requireAuth, requireAnyRole("Admin", "Intake"), async (req, res, next) => {
   try {
     const id = req.body.id || randomUUID();
     const rows = await query<PatientRow>(
@@ -221,7 +221,7 @@ patientsRouter.post("/api/patients", requireAuth, requireAnyRole("Admin", "Couns
   }
 });
 
-patientsRouter.post("/api/patients/bulk-upsert", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
+patientsRouter.post("/api/patients/bulk-upsert", requireAuth, requireAnyRole("Admin", "Intake"), async (req, res, next) => {
   try {
     const records = Array.isArray(req.body.records) ? req.body.records : [];
 
@@ -352,7 +352,7 @@ patientsRouter.get("/api/patients/:id/intake", requireAuth, requireAnyRole("Admi
   }
 });
 
-patientsRouter.post("/api/patients/:id/case-assignment", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
+patientsRouter.post("/api/patients/:id/case-assignment", requireAuth, requireAnyRole("Admin", "Intake"), async (req, res, next) => {
   try {
     const rows = await query(
       `insert into public.patient_case_assignments (patient_id, counselor_user_id, counselor_email)
@@ -370,7 +370,7 @@ patientsRouter.post("/api/patients/:id/case-assignment", requireAuth, requireAny
   }
 });
 
-patientsRouter.delete("/api/patients/:id/case-assignment", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
+patientsRouter.delete("/api/patients/:id/case-assignment", requireAuth, requireAnyRole("Admin", "Intake"), async (req, res, next) => {
   try {
     await query(`delete from public.patient_case_assignments where patient_id = $1`, [req.params.id]);
     res.json({ ok: true });

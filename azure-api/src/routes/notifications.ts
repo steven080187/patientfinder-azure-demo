@@ -2,6 +2,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { query } from "../db.js";
 import { getRequestUser, requireAnyRole, requireAuth } from "../entraAuth.js";
+import { invalidateDashboardCache } from "./dashboard.js";
 
 export const notificationsRouter = Router();
 
@@ -38,6 +39,7 @@ notificationsRouter.post("/api/notifications", requireAuth, requireAnyRole("Admi
         req.body.sender_email ?? user?.email ?? null,
       ]
     );
+    invalidateDashboardCache();
 
     res.status(201).json({ ok: true });
   } catch (error) {
@@ -70,7 +72,7 @@ notificationsRouter.patch("/api/notifications/:notificationId/read", requireAuth
             where id = $1
               and (
                 lower(coalesce(recipient_email, '')) = lower($2)
-                or recipient_user_id::text = $3
+                or lower(coalesce(recipient_user_id::text, '')) = lower($3)
               )
             returning id`,
           [notificationId, user?.email ?? "", user?.id ?? ""]
@@ -80,6 +82,7 @@ notificationsRouter.patch("/api/notifications/:notificationId/read", requireAuth
       res.status(404).json({ ok: false, error: "Notification not found." });
       return;
     }
+    invalidateDashboardCache();
 
     res.json({ ok: true });
   } catch (error) {
@@ -123,7 +126,9 @@ notificationsRouter.post("/api/notifications/:notificationId/reply", requireAuth
     }
 
     const isAdmin = user.roles.includes("Admin");
-    const isRecipient = (original.recipient_email ?? "").toLowerCase() === user.email.toLowerCase() || original.recipient_user_id === user.id;
+    const isRecipient =
+      (original.recipient_email ?? "").toLowerCase() === user.email.toLowerCase() ||
+      (original.recipient_user_id ?? "").toLowerCase() === user.id.toLowerCase();
     if (!isAdmin && !isRecipient) {
       res.status(403).json({ ok: false, error: "You can only reply to notifications sent to you." });
       return;
@@ -151,6 +156,7 @@ notificationsRouter.post("/api/notifications/:notificationId/reply", requireAuth
         user.email.toLowerCase(),
       ]
     );
+    invalidateDashboardCache();
 
     res.status(201).json({ ok: true });
   } catch (error) {

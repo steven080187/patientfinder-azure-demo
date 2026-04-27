@@ -27,6 +27,10 @@ type DashboardCacheEntry = {
 
 const dashboardCache = new Map<string, DashboardCacheEntry>();
 
+export function invalidateDashboardCache() {
+  dashboardCache.clear();
+}
+
 function getDashboardCacheKey(input: {
   userId: string;
   userEmail: string;
@@ -99,7 +103,7 @@ dashboardRouter.get("/api/dashboard", requireAuth, requireAnyRole("Admin", "Coun
           `select *
              from public.in_app_notifications
             where lower(coalesce(recipient_email, '')) = lower($1)
-               or recipient_user_id::text = $2
+               or lower(coalesce(recipient_user_id::text, '')) = lower($2)
             order by created_at desc`,
           "in_app_notifications",
           [userEmail, userId]

@@ -590,14 +590,26 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string)
   });
 }
 
+function isUuidLike(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+function cleanPersonLabel(value: string | undefined | null, fallback = "—") {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return fallback;
+  if (isUuidLike(trimmed)) return fallback;
+  return trimmed;
+}
+
 function buildHighlightMap(notes: InAppNotification[]) {
   const map: Record<string, "normal" | "urgent"> = {};
   notes.forEach((note) => {
     if (!note.patientId || note.readAt || !/^Patient highlight:/i.test(note.title)) return;
     const nextPriority = note.priority === "urgent" ? "urgent" : "normal";
-    const current = map[note.patientId];
+    const normalizedPatientId = normalizePatientId(note.patientId);
+    const current = map[normalizedPatientId];
     if (!current || nextPriority === "urgent") {
-      map[note.patientId] = nextPriority;
+      map[normalizedPatientId] = nextPriority;
     }
   });
   return map;
@@ -1451,6 +1463,9 @@ export default function App() {
   const hasCounselorRole = activeAuthUser?.roles.includes("Counselor") ?? false;
   const hasAdminRole = activeAuthUser?.roles.includes("Admin") ?? false;
   const hasIntakeRole = activeAuthUser?.roles.includes("Intake") ?? false;
+  const canManageAssignments = hasAdminRole || hasIntakeRole;
+  const canManageRosterScope = hasAdminRole || hasIntakeRole;
+  const canManagePatients = hasAdminRole || hasIntakeRole;
   const hasKnownWorkspaceRole = hasCounselorRole || hasAdminRole || hasIntakeRole;
   const authReadyForApi = isEntraMode
     ? Boolean(activeAuthUser && activeAccessToken && !azureAuth.loading)
@@ -1475,9 +1490,9 @@ export default function App() {
       setCaseLoadOnly(false);
       return;
     }
-    setForceRoster(hasAdminRole || hasIntakeRole);
-    setCaseLoadOnly(hasCounselorRole && !hasAdminRole && !hasIntakeRole);
-  }, [activeAuthUser, hasAdminRole, hasCounselorRole, hasIntakeRole, hasKnownWorkspaceRole]);
+    setForceRoster(canManageRosterScope);
+    setCaseLoadOnly(hasCounselorRole && !canManageRosterScope);
+  }, [activeAuthUser, hasCounselorRole, hasKnownWorkspaceRole, canManageRosterScope]);
 
 
   useEffect(() => {
@@ -1527,13 +1542,10 @@ export default function App() {
   const activeUserId = String(activeAuthUser?.id ?? activeAuthUser?.email ?? "azure-demo-user").toLowerCase();
   const activeUserEmail = activeAuthUser?.email ?? "";
   const mobileInstallBaseUrl = String(import.meta.env.VITE_MOBILE_INSTALL_URL ?? "").trim();
-  const expoGoUrl = String(import.meta.env.VITE_EXPO_GO_URL ?? "").trim();
   const mobileInstallCode = hashInstallSeed(`${activeUserId}:patientfinder-mobile`);
-  const mobileInstallUrl = mobileInstallBaseUrl
+  const documentScannerInstallUrl = mobileInstallBaseUrl
     ? `${mobileInstallBaseUrl}${mobileInstallBaseUrl.includes("?") ? "&" : "?"}invite=${encodeURIComponent(mobileInstallCode)}`
     : "";
-  const iosInstallTarget = expoGoUrl || mobileInstallUrl;
-  const expoGoInfoUrl = "https://expo.dev/go";
   const counselorId = activeUserId;
   const counselorLabel = activeUserEmail?.split("@")[0] ?? "My";
   const counselorThinListStorageKey = `patientfinder.thinlist.${activeUserId}`;
@@ -1577,6 +1589,13 @@ export default function App() {
 
     return [...optionMap.values()].sort((a, b) => a.label.localeCompare(b.label));
   }, [activeAuthUser?.name, activeUserEmail, azureDemoUsers, counselorId, teammateEmails]);
+  const counselorLabelByEmail = useMemo(() => {
+    const map: Record<string, string> = {};
+    counselorAssignmentOptions.forEach((option) => {
+      map[option.email] = option.label;
+    });
+    return map;
+  }, [counselorAssignmentOptions]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1766,14 +1785,6 @@ export default function App() {
         );
       })
     );
-    // If a counselor has no active assignments yet, default to full roster instead of an empty case-load view.
-    if ((activeAuthUser?.roles.includes("Counselor") ?? false) && !(activeAuthUser?.roles.includes("Admin") ?? false)) {
-      const assignedCount = patientsRows.filter((row: any) => nextAssignments[normalizePatientId(row.id)] === counselorId).length;
-      if (assignedCount === 0 && patientsRows.length > 0) {
-        setForceRoster(true);
-        setCaseLoadOnly(false);
-      }
-    }
     setSessions(buildSessions(sessionsRows, attendeeRows));
     setBillingEntries(
       billingRows.map((row) => ({
@@ -1796,9 +1807,9 @@ export default function App() {
         title: row.title,
         message: row.message,
         priority: row.priority,
-        patientId: row.patient_id ?? undefined,
+        patientId: row.patient_id ? normalizePatientId(row.patient_id) : undefined,
         recipientEmail: row.recipient_email ?? undefined,
-        recipientUserId: row.recipient_user_id ?? undefined,
+        recipientUserId: row.recipient_user_id ? String(row.recipient_user_id).toLowerCase() : undefined,
         senderEmail: row.sender_email ?? undefined,
         createdAt: row.created_at,
         readAt: row.read_at ?? undefined,
@@ -1942,25 +1953,6 @@ export default function App() {
     [operationalPatients, currentWeek]
   );
 
-  useEffect(() => {
-    // Deploy/data safety: if a counselor lands on an empty case-load, auto-fallback to full roster.
-    if (loadingPatients) return;
-    if (!hasCounselorRole || hasAdminRole || hasIntakeRole) return;
-    if (!caseLoadOnly || forceRoster) return;
-    if (!patients.length || caseLoadPatients.length) return;
-    setForceRoster(true);
-    setCaseLoadOnly(false);
-  }, [
-    loadingPatients,
-    hasCounselorRole,
-    hasAdminRole,
-    hasIntakeRole,
-    caseLoadOnly,
-    forceRoster,
-    patients.length,
-    caseLoadPatients.length,
-  ]);
-
   const dashboardMetrics = useMemo(() => {
     const dueReview = dashboardScopePatients.filter((patient) => {
       const due = getProblemListDueDates(complianceByPatient[patient.id]);
@@ -2008,7 +2000,7 @@ export default function App() {
         (note) =>
           note.patientId &&
           !note.readAt &&
-          ((note.recipientEmail && note.recipientEmail.toLowerCase() === email) || (note.recipientUserId && note.recipientUserId === activeUserId))
+          ((note.recipientEmail && note.recipientEmail.toLowerCase() === email) || (note.recipientUserId && note.recipientUserId.toLowerCase() === activeUserId))
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 4)
@@ -2027,7 +2019,7 @@ export default function App() {
       .filter(
         (note) =>
           !note.readAt &&
-          ((note.recipientEmail && note.recipientEmail.toLowerCase() === email) || (note.recipientUserId && note.recipientUserId === activeUserId))
+          ((note.recipientEmail && note.recipientEmail.toLowerCase() === email) || (note.recipientUserId && note.recipientUserId.toLowerCase() === activeUserId))
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 6)
@@ -2038,6 +2030,22 @@ export default function App() {
       })
       .filter((entry): entry is { note: InAppNotification; patient: Patient } => Boolean(entry));
   }, [notifications, patients, hasAdminRole, activeUserEmail, activeUserId]);
+  const unreadPatientNotificationMap = useMemo(() => {
+    const email = activeUserEmail.toLowerCase();
+    const isMine = (note: InAppNotification) =>
+      (note.recipientEmail && note.recipientEmail.toLowerCase() === email) ||
+      (note.recipientUserId && note.recipientUserId.toLowerCase() === activeUserId);
+
+    const next: Record<string, InAppNotification> = {};
+    notifications
+      .filter((note) => note.patientId && !note.readAt && isMine(note))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .forEach((note) => {
+        const patientId = normalizePatientId(note.patientId);
+        if (!next[patientId]) next[patientId] = note;
+      });
+    return next;
+  }, [notifications, activeUserEmail, activeUserId]);
   const highlightedNotes = hasAdminRole ? adminInboxNotes : counselorSpotlightNotes;
 
   const applyDashboardFilter = (filter: DashboardFilterKey) => {
@@ -2383,6 +2391,7 @@ export default function App() {
   };
 
   const openCaseAssignmentModal = (patientId: string) => {
+    if (!canManageAssignments) return;
     const patient = patients.find((row) => row.id === patientId) ?? patientDetail;
     if (!patient) return;
     const assignedEmail =
@@ -2529,6 +2538,36 @@ export default function App() {
       setHighlightedPatientIds(buildHighlightMap(next));
       return next;
     });
+  };
+
+  const dismissPatientHighlights = async (patientId: string) => {
+    const normalizedPatientId = normalizePatientId(patientId);
+    const targetIds = notifications
+      .filter(
+        (note) =>
+          !note.readAt &&
+          note.patientId &&
+          normalizePatientId(note.patientId) === normalizedPatientId &&
+          /^Patient highlight:/i.test(note.title)
+      )
+      .map((note) => note.id);
+    if (!targetIds.length) return;
+
+    const snapshot = notifications;
+    const now = new Date().toISOString();
+    const targetSet = new Set(targetIds);
+    setNotifications((prev) => {
+      const next = prev.map((note) => (targetSet.has(note.id) ? { ...note, readAt: note.readAt ?? now } : note));
+      setHighlightedPatientIds(buildHighlightMap(next));
+      return next;
+    });
+    try {
+      await Promise.all(targetIds.map((id) => dataClient.markNotificationRead(id)));
+    } catch (error) {
+      setNotifications(snapshot);
+      setHighlightedPatientIds(buildHighlightMap(snapshot));
+      throw error;
+    }
   };
 
   const replyToNotification = async (notificationId: string, message: string) => {
@@ -2826,8 +2865,8 @@ export default function App() {
                   </div>
 
                   <div className="workspaceSidebarSection">
-                    <button
-                      className={!forceRoster && caseLoadOnly ? "workspaceActionBtn primary" : "workspaceActionBtn"}
+                <button
+                  className={!forceRoster && caseLoadOnly ? "workspaceActionBtn primary" : "workspaceActionBtn"}
                       onClick={() => {
                         setWorkspaceTab("roster");
                         setCaseLoadOnly(true);
@@ -2837,17 +2876,19 @@ export default function App() {
                     >
                       {counselorLabel} case load
                     </button>
-                    <button
-                      className={forceRoster ? "workspaceActionBtn primary" : "workspaceActionBtn"}
-                      onClick={() => {
-                        setWorkspaceTab("roster");
-                        setForceRoster(true);
-                        setCaseLoadOnly(false);
-                        setSearch("");
-                      }}
-                    >
-                      Full roster
-                    </button>
+                    {canManageRosterScope ? (
+                      <button
+                        className={forceRoster ? "workspaceActionBtn primary" : "workspaceActionBtn"}
+                        onClick={() => {
+                          setWorkspaceTab("roster");
+                          setForceRoster(true);
+                          setCaseLoadOnly(false);
+                          setSearch("");
+                        }}
+                      >
+                        Full roster
+                      </button>
+                    ) : null}
                     <button className="workspaceActionBtn" onClick={() => setRoute({ name: "attendance" })}>
                       Visits & tests
                     </button>
@@ -2860,16 +2901,20 @@ export default function App() {
                   </div>
 
                   <div className="workspaceSidebarSection">
-                    <button className="workspaceActionBtn" onClick={() => setShowAddPatient(true)}>
-                      Add patient
-                    </button>
+                    {canManagePatients ? (
+                      <button className="workspaceActionBtn" onClick={() => setShowAddPatient(true)}>
+                        Add patient
+                      </button>
+                    ) : null}
                     <button className="workspaceActionBtn" onClick={exportRosterSpreadsheet}>
                       Export roster spreadsheet
                     </button>
-                    <label className={`workspaceActionBtn upload${jsonImporting ? " disabled" : ""}`}>
-                      {jsonImporting ? "Importing JSON..." : "Import patient JSON"}
-                      <input type="file" accept=".json" hidden onChange={handleJsonUpload} disabled={jsonImporting} />
-                    </label>
+                    {canManagePatients ? (
+                      <label className={`workspaceActionBtn upload${jsonImporting ? " disabled" : ""}`}>
+                        {jsonImporting ? "Importing JSON..." : "Import patient JSON"}
+                        <input type="file" accept=".json" hidden onChange={handleJsonUpload} disabled={jsonImporting} />
+                      </label>
+                    ) : null}
                     {hasAdminRole ? (
                       <button className="workspaceActionBtn" onClick={() => setShowNotificationComposer(true)}>
                         Send counselor note
@@ -2880,39 +2925,24 @@ export default function App() {
                     </button>
                   </div>
 
-                  {mobileInstallUrl ? (
+                  {documentScannerInstallUrl ? (
                     <div className="workspaceSidebarSection">
-                      <div className="workspaceSectionLabel">Mobile install</div>
+                      <div className="workspaceSectionLabel">Document scanner</div>
                       <div style={{ display: "grid", gap: 10 }}>
                         <div style={{ fontSize: 12, opacity: 0.85 }}>
-                          iPhone uses Expo Go (free) and does not require an Apple Developer account.
+                          Install the Android scanner app for document capture and upload.
                         </div>
                         <button
                           className="workspaceActionBtn"
-                          onClick={() => window.open(mobileInstallUrl, "_blank", "noopener,noreferrer")}
+                          onClick={() => window.open(documentScannerInstallUrl, "_blank", "noopener,noreferrer")}
                         >
-                          Android install
-                        </button>
-                        <button
-                          className="workspaceActionBtn"
-                          onClick={() => {
-                            if (expoGoUrl) {
-                              window.open(expoGoUrl, "_blank", "noopener,noreferrer");
-                            } else {
-                              window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
-                            }
-                            window.alert(
-                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go.\n3) Paste this link in Expo Go:\n${iosInstallTarget}`,
-                            );
-                          }}
-                        >
-                          iPhone (Expo Go)
+                          Download scanner (Android)
                         </button>
                         <button
                           className="workspaceActionBtn"
                           onClick={async () => {
                             try {
-                              await navigator.clipboard.writeText(mobileInstallUrl);
+                              await navigator.clipboard.writeText(documentScannerInstallUrl);
                               window.alert("Install link copied.");
                             } catch {
                               window.alert("Could not copy automatically. Open link and copy from browser.");
@@ -3049,18 +3079,20 @@ export default function App() {
                       >
                         {counselorLabel} case load
                       </button>
-                      <button
-                        className={forceRoster ? "workspaceActionBtn primary" : "workspaceActionBtn"}
-                        onClick={() => {
-                          setWorkspaceTab("roster");
-                          setForceRoster(true);
-                          setCaseLoadOnly(false);
-                          setSearch("");
-                          setMobileMenuOpen(false);
-                        }}
-                      >
-                        Full roster
-                      </button>
+                      {canManageRosterScope ? (
+                        <button
+                          className={forceRoster ? "workspaceActionBtn primary" : "workspaceActionBtn"}
+                          onClick={() => {
+                            setWorkspaceTab("roster");
+                            setForceRoster(true);
+                            setCaseLoadOnly(false);
+                            setSearch("");
+                            setMobileMenuOpen(false);
+                          }}
+                        >
+                          Full roster
+                        </button>
+                      ) : null}
                       <button
                         className={workspaceTab === "attention" ? "workspaceActionBtn primary" : "workspaceActionBtn"}
                         onClick={() => {
@@ -3070,15 +3102,17 @@ export default function App() {
                       >
                         What needs attention first
                       </button>
-                      <button
-                        className="workspaceActionBtn"
-                        onClick={() => {
-                          setShowAddPatient(true);
-                          setMobileMenuOpen(false);
-                        }}
-                      >
-                        Add patient
-                      </button>
+                      {canManagePatients ? (
+                        <button
+                          className="workspaceActionBtn"
+                          onClick={() => {
+                            setShowAddPatient(true);
+                            setMobileMenuOpen(false);
+                          }}
+                        >
+                          Add patient
+                        </button>
+                      ) : null}
                       <button className="workspaceActionBtn" onClick={exportRosterSpreadsheet}>
                         Export roster
                       </button>
@@ -3124,32 +3158,17 @@ export default function App() {
                         Logout
                       </button>
                     </div>
-                    {mobileInstallUrl ? (
+                    {documentScannerInstallUrl ? (
                       <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                        <div className="workspaceSectionLabel">Mobile install</div>
+                        <div className="workspaceSectionLabel">Document scanner</div>
                         <div style={{ fontSize: 12, opacity: 0.85 }}>
-                          iPhone is Expo Go only (free).
+                          Android download for the scanner app.
                         </div>
                         <button
                           className="workspaceActionBtn"
-                          onClick={() => window.open(mobileInstallUrl, "_blank", "noopener,noreferrer")}
+                          onClick={() => window.open(documentScannerInstallUrl, "_blank", "noopener,noreferrer")}
                         >
-                          Android install
-                        </button>
-                        <button
-                          className="workspaceActionBtn"
-                          onClick={() => {
-                            if (expoGoUrl) {
-                              window.open(expoGoUrl, "_blank", "noopener,noreferrer");
-                            } else {
-                              window.open(expoGoInfoUrl, "_blank", "noopener,noreferrer");
-                            }
-                            window.alert(
-                              `iPhone setup (free via Expo Go):\n1) Install Expo Go from the App Store.\n2) Open Expo Go.\n3) Paste this link in Expo Go:\n${iosInstallTarget}`,
-                            );
-                          }}
-                        >
-                          iPhone (Expo Go)
+                          Download scanner (Android)
                         </button>
                       </div>
                     ) : null}
@@ -3460,7 +3479,7 @@ export default function App() {
                       ))}
                       {!agendaRows.length && !highlightedNotes.length ? (
                         <div className="workspaceAgendaEmpty">
-                          {loadingPatients ? "Loading roster data..." : "No urgent items right now. Open the roster tab to review patients or search the full list."}
+                          No urgent items right now. Open the roster tab to review patients or search the full list.
                         </div>
                       ) : null}
                     </div>
@@ -3468,15 +3487,14 @@ export default function App() {
                 )}
 
                 <div className="homeFooter">
-                  {loadingPatients ? "Loading patients from database..." : ""}
-                  {!loadingPatients && loadError ? ` ${loadError}` : ""}
+                  {loadError ? loadError : ""}
                 </div>
               </>
             )}
           </main>
         </div>
 
-        {showAddPatient && (
+        {showAddPatient && canManagePatients && (
           <AddPatientModal
             dataClient={dataClient}
             onClose={() => setShowAddPatient(false)}
@@ -3486,7 +3504,7 @@ export default function App() {
             }}
           />
         )}
-        {caseAssignmentTarget ? (
+        {caseAssignmentTarget && canManageAssignments ? (
           <CaseAssignmentModal
             patientName={caseAssignmentTarget.patientName}
             currentCounselorEmail={caseAssignmentTarget.currentCounselorEmail}
@@ -3706,12 +3724,18 @@ export default function App() {
             patient={p}
             allSessions={sessions}
             dataClient={dataClient}
-            counselorId={counselorId}
             hasAssignment={Boolean(caseAssignments[p.id] || caseAssignmentEmails[p.id])}
             isAssignedToMe={caseAssignments[p.id] === counselorId}
             assignedCounselorEmail={
               caseAssignmentEmails[p.id] ??
               (caseAssignments[p.id]?.includes("@") ? caseAssignments[p.id] : "")
+            }
+            assignedCounselorLabel={
+              (() => {
+                const email = caseAssignmentEmails[p.id] ?? (caseAssignments[p.id]?.includes("@") ? caseAssignments[p.id] : "");
+                if (!email) return undefined;
+                return counselorLabelByEmail[email] ?? email;
+              })()
             }
             compliance={complianceByPatient[p.id]}
             onAssignCase={() => openCaseAssignmentModal(p.id)}
@@ -3727,6 +3751,8 @@ export default function App() {
               setPatientDetail(null);
               setRoute({ name: "home" });
             }}
+            canManageAssignment={canManageAssignments}
+            canDeletePatient={hasAdminRole}
             canHighlightPatient={hasAdminRole}
             onSendHighlight={async ({ message, priority }) =>
               sendPatientHighlight({
@@ -3735,6 +3761,12 @@ export default function App() {
                 priority,
               })
             }
+            unreadHighlightNote={unreadPatientNotificationMap[p.id]}
+            onMarkHighlightRead={() => dismissPatientHighlights(p.id)}
+            onReplyToHighlight={async (notificationId, message) => {
+              await dataClient.replyToNotification(notificationId, { message });
+              await dismissPatientHighlights(p.id);
+            }}
             onDocumentsTabActiveChange={setPatientDocumentsTabActive}
           />
         ) : (
@@ -3745,7 +3777,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {caseAssignmentTarget ? (
+        {caseAssignmentTarget && canManageAssignments ? (
           <CaseAssignmentModal
             patientName={caseAssignmentTarget.patientName}
             currentCounselorEmail={caseAssignmentTarget.currentCounselorEmail}
@@ -4231,12 +4263,18 @@ function SearchResults({
             {!rows.length ? <div className="workspaceEmptyState">No patients match the current search or filters.</div> : null}
           </div>
           <div className="workspaceSheetFloatingArrows" aria-hidden="false">
-            <button className="workspaceMiniBtn workspaceArrowBtn" onClick={() => sheetScrollRef.current?.scrollBy({ left: -420, behavior: "smooth" })}>
-              <span>←</span>
-            </button>
-            <button className="workspaceMiniBtn workspaceArrowBtn" onClick={() => sheetScrollRef.current?.scrollBy({ left: 420, behavior: "smooth" })}>
-              <span>→</span>
-            </button>
+            <button
+              type="button"
+              className="workspaceArrowLaneBtn"
+              aria-label="Scroll left"
+              onClick={() => sheetScrollRef.current?.scrollBy({ left: -420, behavior: "smooth" })}
+            />
+            <button
+              type="button"
+              className="workspaceArrowLaneBtn"
+              aria-label="Scroll right"
+              onClick={() => sheetScrollRef.current?.scrollBy({ left: 420, behavior: "smooth" })}
+            />
           </div>
         </div>
         {docEditor ? (
@@ -4710,10 +4748,10 @@ function PatientPage({
   patient,
   allSessions,
   dataClient,
-  counselorId,
   hasAssignment,
   isAssignedToMe,
   assignedCounselorEmail,
+  assignedCounselorLabel,
   compliance,
   onAssignCase,
   onClearAssignment,
@@ -4721,17 +4759,22 @@ function PatientPage({
   onUpdateRosterDetails,
   onUpdatePatient,
   onDeletePatient,
+  canManageAssignment,
+  canDeletePatient,
   canHighlightPatient,
   onSendHighlight,
+  unreadHighlightNote,
+  onMarkHighlightRead,
+  onReplyToHighlight,
   onDocumentsTabActiveChange,
 }: {
   patient: Patient;
   allSessions: Session[];
   dataClient: DataClient;
-  counselorId: string;
   hasAssignment: boolean;
   isAssignedToMe: boolean;
   assignedCounselorEmail?: string;
+  assignedCounselorLabel?: string;
   compliance?: PatientCompliance;
   onAssignCase: () => void;
   onClearAssignment: () => void;
@@ -4739,8 +4782,13 @@ function PatientPage({
   onUpdateRosterDetails: (patch: Partial<PatientRosterDetails>) => void;
   onUpdatePatient: (next: Patient) => void;
   onDeletePatient: () => void;
+  canManageAssignment: boolean;
+  canDeletePatient: boolean;
   canHighlightPatient: boolean;
   onSendHighlight: (payload: { message: string; priority: "normal" | "urgent" }) => Promise<boolean>;
+  unreadHighlightNote?: InAppNotification;
+  onMarkHighlightRead: () => Promise<void>;
+  onReplyToHighlight: (notificationId: string, message: string) => Promise<void>;
   onDocumentsTabActiveChange?: (active: boolean) => void;
 }) {
   const [tab, setTab] = useState<"overview" | "documents" | "intake" | "snap" | "health" | "consents" | "attendance">("overview");
@@ -4761,6 +4809,9 @@ function PatientPage({
   const [statusChanging, setStatusChanging] = useState(false);
   const [programSaving, setProgramSaving] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
+  const [inlineReply, setInlineReply] = useState("");
+  const [highlightActionBusy, setHighlightActionBusy] = useState<"read" | "reply" | null>(null);
+  const [highlightReplyOpen, setHighlightReplyOpen] = useState(false);
 
   useEffect(() => {
     onDocumentsTabActiveChange?.(tab === "documents");
@@ -4846,6 +4897,8 @@ function PatientPage({
   const treatmentPlanSummary = getTreatmentPlanSummary(patient, compliance);
   const therapySummary = getTherapySummary(patient);
   const roster = patient.rosterDetails ?? {};
+  const counselorDisplay = cleanPersonLabel(assignedCounselorLabel ?? patient.counselor, "Unassigned");
+  const assignedCounselorDisplay = cleanPersonLabel(assignedCounselorLabel ?? assignedCounselorEmail, "another counselor");
 
   const updateConsentRawJson = async (newJson: any) => {
     if (!sub) return;
@@ -5243,7 +5296,7 @@ function PatientPage({
             <div>
               <div className="heroName">{patient.displayName}</div>
               <div className="heroMeta">
-                MRN {patient.mrn ?? "—"} • {patient.primaryProgram ?? "—"} • Counselor {patient.counselor ?? "—"} • Signed in as {counselorId}
+                MRN {patient.mrn ?? "—"} • {patient.primaryProgram ?? "—"} • Counselor {counselorDisplay}
               </div>
             </div>
             <div className="patientHeroActions">
@@ -5252,13 +5305,17 @@ function PatientPage({
                   Highlight
                 </button>
               ) : null}
-              <button className="btn ghost btnCompact" onClick={onAssignCase}>
-                {hasAssignment ? "Reassign Case" : "Assign Case"}
-              </button>
-              {hasAssignment ? (
-                <button className="btn ghost btnCompact" onClick={onClearAssignment}>
-                  Remove Case Assignment
-                </button>
+              {canManageAssignment ? (
+                <>
+                  <button className="btn ghost btnCompact" onClick={onAssignCase}>
+                    {hasAssignment ? "Reassign Case" : "Assign Case"}
+                  </button>
+                  {hasAssignment ? (
+                    <button className="btn ghost btnCompact" onClick={onClearAssignment}>
+                      Remove Case Assignment
+                    </button>
+                  ) : null}
+                </>
               ) : null}
               <select
                 className="select"
@@ -5274,9 +5331,85 @@ function PatientPage({
                 <option value="Former Patient">Former Patient</option>
               </select>
               <div className={pillClass(patient.kind)}>{patient.kind}</div>
-              <button className="btn btnDanger btnCompact" onClick={() => setShowDeleteModal(true)}>Delete</button>
+              {canDeletePatient ? (
+                <button className="btn btnDanger btnCompact" onClick={() => setShowDeleteModal(true)}>Delete</button>
+              ) : null}
             </div>
           </div>
+          {unreadHighlightNote ? (
+            <section className={`patientStickyNote ${unreadHighlightNote.priority === "urgent" ? "urgent" : "normal"}`}>
+              <div className="patientStickyHead">
+                <strong>{unreadHighlightNote.priority === "urgent" ? "Urgent admin note" : "Admin note"}</strong>
+                <span>
+                  {formatNotificationTimestamp(unreadHighlightNote.createdAt)}
+                  {unreadHighlightNote.senderEmail ? ` • ${unreadHighlightNote.senderEmail}` : ""}
+                </span>
+              </div>
+              <div className="patientStickyBody">{unreadHighlightNote.message}</div>
+              {highlightReplyOpen ? (
+                <div className="patientStickyReply">
+                  <textarea
+                    className="authInput controlCenterTextarea"
+                    value={inlineReply}
+                    onChange={(e) => setInlineReply(e.target.value)}
+                    placeholder="Type your response back to admin"
+                  />
+                  <div className="patientStickyActions">
+                    <button
+                      className="btn ghost btnCompact"
+                      disabled={highlightActionBusy !== null}
+                      onClick={() => {
+                        setInlineReply("");
+                        setHighlightReplyOpen(false);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="btn btnCompact"
+                      disabled={highlightActionBusy !== null || !inlineReply.trim()}
+                      onClick={async () => {
+                        setHighlightActionBusy("reply");
+                        try {
+                          await onReplyToHighlight(unreadHighlightNote.id, inlineReply.trim());
+                          setInlineReply("");
+                          setHighlightReplyOpen(false);
+                        } finally {
+                          setHighlightActionBusy(null);
+                        }
+                      }}
+                    >
+                      {highlightActionBusy === "reply" ? "Sending..." : "Send reply"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="patientStickyActions">
+                  <button
+                    className="btn ghost btnCompact"
+                    disabled={highlightActionBusy !== null}
+                    onClick={async () => {
+                      setHighlightActionBusy("read");
+                      try {
+                        await onMarkHighlightRead();
+                      } finally {
+                        setHighlightActionBusy(null);
+                      }
+                    }}
+                  >
+                    {highlightActionBusy === "read" ? "Marking..." : "Read"}
+                  </button>
+                  <button
+                    className="btn btnCompact"
+                    disabled={highlightActionBusy !== null}
+                    onClick={() => setHighlightReplyOpen(true)}
+                  >
+                    Reply
+                  </button>
+                </div>
+              )}
+            </section>
+          ) : null}
 
           <div className="tabs">
             {(["overview", "documents", "intake", "snap", "health", "consents", "attendance"] as const).map((t) => (
@@ -5318,7 +5451,7 @@ function PatientPage({
                         {hasAssignment
                           ? isAssignedToMe
                             ? "Assigned to your case load"
-                            : `Assigned to ${assignedCounselorEmail ?? "another counselor"}`
+                            : `Assigned to ${assignedCounselorDisplay}`
                           : "Not assigned yet"}
                       </span>
                     </div>
@@ -5346,7 +5479,7 @@ function PatientPage({
                       {hasAssignment
                         ? isAssignedToMe
                           ? "On your case load"
-                          : `Assigned to ${assignedCounselorEmail ?? "another counselor"}`
+                          : `Assigned to ${assignedCounselorDisplay}`
                         : "Not assigned yet"}
                     </span>
                   </div>
@@ -5782,7 +5915,7 @@ function PatientPage({
           ) : null}
         </div>
       </div>
-      {showDeleteModal && (
+      {showDeleteModal && canDeletePatient && (
         <DeletePatientModal
           dataClient={dataClient}
           patient={patient}
@@ -6910,7 +7043,7 @@ function AzureDemoLoginScreen({
       <div className="authBrand">
         <img className="authLogo" src={patientFinderLogo} alt="Patient Finder logo" />
       </div>
-      <div className="authTitle">Patient Finder Azure Demo</div>
+      <AuthRosterSourcePicker />
       <div className="authSub">Use one of the seeded demo accounts to show how case loads stick to the signed-in counselor.</div>
 
       <div className="authGrid">
@@ -6982,8 +7115,8 @@ function EntraLoginScreen({
       <div className="authBrand">
         <img className="authLogo" src={patientFinderLogo} alt="Patient Finder logo" />
       </div>
-      <div className="authTitle">Patient Finder</div>
       <div className="authSub">Sign in with your NCADD Microsoft account.</div>
+      <AuthRosterSourcePicker />
       <div className="authRow">
         <div />
         <button className="btn" onClick={submit} disabled={loading}>
@@ -6991,6 +7124,72 @@ function EntraLoginScreen({
         </button>
       </div>
       {err ? <div className="authErr">{err}</div> : null}
+    </div>
+  );
+}
+
+function AuthRosterSourcePicker() {
+  const [source, setSource] = useState<"ncadd" | "demo">("demo");
+  const [open, setOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [open]);
+
+  const selectedLogo = source === "ncadd" ? ncaddLogo : themeButtonLogo;
+  const selectedAlt = source === "ncadd" ? "NCADD roster logo" : "Demo roster logo";
+
+  return (
+    <div className="authRosterPicker" ref={pickerRef}>
+      <div className="authRosterBadge" aria-label="Roster source picker">
+        <span className="authRosterBadgeLabel">Roster source</span>
+        <div className="authRosterControl">
+          <button
+            type="button"
+            className="authRosterLogoButton"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={() => setOpen((prev) => !prev)}
+          >
+            <img className={`authRosterLogo${source === "demo" ? " demo" : ""}`} src={selectedLogo} alt={selectedAlt} />
+            <span className="authRosterChevron" aria-hidden="true">{open ? "▲" : "▼"}</span>
+          </button>
+          {open ? (
+            <div className="authRosterDropdown" role="menu">
+              <button
+                type="button"
+                className={source === "demo" ? "authRosterOption active" : "authRosterOption"}
+                onClick={() => {
+                  setSource("demo");
+                  setOpen(false);
+                }}
+              >
+                <img className="authRosterOptionLogo demo" src={themeButtonLogo} alt="" aria-hidden="true" />
+                <span>Demo (active)</span>
+              </button>
+              <button
+                type="button"
+                className={source === "ncadd" ? "authRosterOption active" : "authRosterOption"}
+                onClick={() => {
+                  setSource("ncadd");
+                  setOpen(false);
+                }}
+              >
+                <img className="authRosterOptionLogo" src={ncaddLogo} alt="" aria-hidden="true" />
+                <span>NCADD (preview only)</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -7162,7 +7361,7 @@ function AttendancePage({
     });
 
     setDrugTestSaving(false);
-    setDrugTestMessage(`Saved ${drugTestResult.toLowerCase()} drug test.`);
+    setDrugTestMessage(`Saved ${drugTestResult.toLowerCase()} toxicology result.`);
     setSelectedDrugTestPatientId("");
     setDrugTestQuery("");
     setDrugTestSubstances([]);
@@ -7183,7 +7382,7 @@ function AttendancePage({
 
   return (
     <div className="attendanceWorkbench">
-      <div className="panel">
+      <div className="panel attendancePanel attendancePanelVisits">
         <div className="panelHead">Log visit</div>
         <div className="panelBody">
           <div className="attendanceForm">
@@ -7246,11 +7445,10 @@ function AttendancePage({
               </select>
             </label>
 
-            <div className="attendanceSelectedList">
+            <div className="attendanceSelectedList attendanceSelectedChecks">
               <label className="attendanceSelectedCard">
                 <div>
                   <div className="strong">Naloxone training</div>
-                  <div className="muted">Adds just the day number to the Naloxone billing column.</div>
                 </div>
                 <input
                   type="checkbox"
@@ -7261,7 +7459,6 @@ function AttendancePage({
               <label className="attendanceSelectedCard">
                 <div>
                   <div className="strong">MAT education</div>
-                  <div className="muted">Adds just the day number to the MAT ED billing column.</div>
                 </div>
                 <input
                   type="checkbox"
@@ -7326,10 +7523,6 @@ function AttendancePage({
               </div>
             ) : null}
 
-            <div className="attendanceHint">
-              Enter start and end to fill total time, or enter start and total time to fill end time automatically.
-            </div>
-
             {sessionMessage ? <div className="hintTiny">{sessionMessage}</div> : null}
 
             <button className="btn" onClick={saveSession} disabled={!sessionCanSave || sessionSaving}>
@@ -7339,8 +7532,8 @@ function AttendancePage({
         </div>
       </div>
 
-      <div className="panel">
-        <div className="panelHead">Log drug test</div>
+      <div className="panel attendancePanel attendancePanelToxicology">
+        <div className="panelHead">Log toxicology</div>
         <div className="panelBody">
           <div className="attendanceForm">
             <label className="attendanceField">
@@ -7424,7 +7617,7 @@ function AttendancePage({
             {drugTestMessage ? <div className="hintTiny">{drugTestMessage}</div> : null}
 
             <button className="btn" onClick={saveDrugTest} disabled={!drugTestCanSave || drugTestSaving}>
-              {drugTestSaving ? "Saving..." : "Save drug test"}
+              {drugTestSaving ? "Saving..." : "Save toxicology"}
             </button>
           </div>
         </div>
@@ -7662,7 +7855,7 @@ function GroupsPage({
                     <span>{fmt(group.group_date)}</span>
                     <span>{formatClock(group.start_time)} - {formatClock(group.end_time)}</span>
                     <span>{group.participant_count} participant{group.participant_count === 1 ? "" : "s"}</span>
-                    <span>{group.counselor_name}</span>
+                    <span>{cleanPersonLabel(group.counselor_name, "Counselor")}</span>
                   </div>
                 </div>
                 <div className="groupsPageActions compact">
@@ -7814,17 +8007,17 @@ function BillingPage({
         </div>
         <div className="workspaceSheetFloatingArrows" aria-hidden="false">
           <button
-            className="workspaceMiniBtn workspaceArrowBtn"
+            type="button"
+            className="workspaceArrowLaneBtn"
+            aria-label="Scroll left"
             onClick={() => billingSheetScrollRef.current?.scrollBy({ left: -420, behavior: "smooth" })}
-          >
-            <span>←</span>
-          </button>
+          />
           <button
-            className="workspaceMiniBtn workspaceArrowBtn"
+            type="button"
+            className="workspaceArrowLaneBtn"
+            aria-label="Scroll right"
             onClick={() => billingSheetScrollRef.current?.scrollBy({ left: 420, behavior: "smooth" })}
-          >
-            <span>→</span>
-          </button>
+          />
         </div>
       </div>
     </div>
