@@ -197,7 +197,8 @@ type Route =
   | { name: "home" }
   | { name: "patient"; patientId: string }
   | { name: "billing" }
-  | { name: "groups" };
+  | { name: "groups" }
+  | { name: "mobile" };
 
 type AuthedRoute = Route | { name: "attendance" };
 type AuthMode = "demo" | "entra";
@@ -2898,6 +2899,9 @@ export default function App() {
                     <button className="workspaceActionBtn" onClick={() => setRoute({ name: "groups" })}>
                       Groups
                     </button>
+                    <button className="workspaceActionBtn" onClick={() => setRoute({ name: "mobile" })}>
+                      Mobile
+                    </button>
                   </div>
 
                   <div className="workspaceSidebarSection">
@@ -2924,36 +2928,6 @@ export default function App() {
                       Logout
                     </button>
                   </div>
-
-                  {documentScannerInstallUrl ? (
-                    <div className="workspaceSidebarSection">
-                      <div className="workspaceSectionLabel">Document scanner</div>
-                      <div style={{ display: "grid", gap: 10 }}>
-                        <div style={{ fontSize: 12, opacity: 0.85 }}>
-                          Install the Android scanner app for document capture and upload.
-                        </div>
-                        <button
-                          className="workspaceActionBtn"
-                          onClick={() => window.open(documentScannerInstallUrl, "_blank", "noopener,noreferrer")}
-                        >
-                          Download scanner (Android)
-                        </button>
-                        <button
-                          className="workspaceActionBtn"
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(documentScannerInstallUrl);
-                              window.alert("Install link copied.");
-                            } catch {
-                              window.alert("Could not copy automatically. Open link and copy from browser.");
-                            }
-                          }}
-                        >
-                          Copy install link
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
                 </>
               ) : null}
             </aside>
@@ -2975,32 +2949,8 @@ export default function App() {
                   </div>
                 ) : null}
 
-                {!privacyLocked && patientTotal > 0 ? (
-                  <div className="workspaceMobilePagerRow">
-                    <button className="btn ghost" disabled={!canPageBack || loadingPatients} onClick={() => setPatientPage((prev) => Math.max(0, prev - 1))}>
-                      Prev page
-                    </button>
-                    <button className="btn ghost" disabled={!canPageForward || loadingPatients} onClick={() => setPatientPage((prev) => prev + 1)}>
-                      Next page
-                    </button>
-                  </div>
-                ) : null}
-
                 {!privacyLocked ? (
                   <div className="workspaceMobileHeroActions">
-                    <button className="btn" onClick={() => setPrivacyLocked(true)}>
-                      Lock workspace
-                    </button>
-                    <button
-                      className={mobileMenuOpen ? "btn ghost active" : "btn ghost"}
-                      onClick={() => {
-                        setMobileMenuOpen((open) => !open);
-                        setMobileGlanceOpen(false);
-                        setMobileSearchOpen(false);
-                      }}
-                    >
-                      {mobileMenuOpen ? "Close menu" : "Menu"}
-                    </button>
                     <button
                       className={mobileGlanceOpen ? "btn ghost active" : "btn ghost"}
                       onClick={() => {
@@ -3021,6 +2971,16 @@ export default function App() {
                     >
                       Search & organize
                     </button>
+                    <button
+                      className={mobileMenuOpen ? "btn ghost active workspaceMobileMenuBtn" : "btn ghost workspaceMobileMenuBtn"}
+                      onClick={() => {
+                        setMobileMenuOpen((open) => !open);
+                        setMobileGlanceOpen(false);
+                        setMobileSearchOpen(false);
+                      }}
+                    >
+                      {mobileMenuOpen ? "Close menu" : "Menu"}
+                    </button>
                   </div>
                 ) : null}
               </section>
@@ -3029,8 +2989,6 @@ export default function App() {
               isMobileWorkspace ? (
                 <div className="workspacePrivacyStage">
                   <div className="workspacePrivacyCard">
-                    <div className="workspaceRosterTitle">Patient data is hidden until you choose to unlock the workspace.</div>
-                    <div className="workspaceAgendaDetail">Tap the logo any time to lock the screen again without signing out.</div>
                     <button className="btn" onClick={() => setPrivacyLocked(false)}>
                       Unlock workspace
                     </button>
@@ -3143,6 +3101,15 @@ export default function App() {
                       >
                         Groups
                       </button>
+                      <button
+                        className="workspaceActionBtn"
+                        onClick={() => {
+                          setRoute({ name: "mobile" });
+                          setMobileMenuOpen(false);
+                        }}
+                      >
+                        Mobile
+                      </button>
                       {hasAdminRole ? (
                         <button
                           className="workspaceActionBtn"
@@ -3158,20 +3125,6 @@ export default function App() {
                         Logout
                       </button>
                     </div>
-                    {documentScannerInstallUrl ? (
-                      <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                        <div className="workspaceSectionLabel">Document scanner</div>
-                        <div style={{ fontSize: 12, opacity: 0.85 }}>
-                          Android download for the scanner app.
-                        </div>
-                        <button
-                          className="workspaceActionBtn"
-                          onClick={() => window.open(documentScannerInstallUrl, "_blank", "noopener,noreferrer")}
-                        >
-                          Download scanner (Android)
-                        </button>
-                      </div>
-                    ) : null}
                   </section>
                 ) : null}
 
@@ -3576,6 +3529,74 @@ export default function App() {
             }}
           />
         ) : null}
+        <ThemePicker theme={theme} setTheme={applyTheme} />
+      </div>
+    );
+  }
+
+  if (route.name === "mobile") {
+    return (
+      <div className="page">
+        <div className="topRow">
+          <button className="btn" onClick={() => setRoute({ name: "home" })}>
+            ← Home
+          </button>
+          <div className="count">Mobile setup</div>
+          <button className="btn ghost" onClick={logout}>
+            Logout
+          </button>
+        </div>
+
+        <div className="panel mobileSupportPanel">
+          <div className="panelHead">Mobile setup and install</div>
+          <div className="panelBody mobileSupportBody">
+            <section className="mobileSupportSection">
+              <h3 className="mobileSupportTitle">Android scanner app</h3>
+              {documentScannerInstallUrl ? (
+                <>
+                  <div className="mobileSupportText">
+                    Install the Android scanner app for document capture and upload.
+                  </div>
+                  <div className="mobileSupportActions">
+                    <button
+                      className="btn"
+                      onClick={() => window.open(documentScannerInstallUrl, "_blank", "noopener,noreferrer")}
+                    >
+                      Download scanner (Android)
+                    </button>
+                    <button
+                      className="btn ghost"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(documentScannerInstallUrl);
+                          window.alert("Install link copied.");
+                        } catch {
+                          window.alert("Could not copy automatically. Open link and copy from browser.");
+                        }
+                      }}
+                    >
+                      Copy install link
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="mobileSupportText">
+                  Android scanner link is not configured for this environment yet.
+                </div>
+              )}
+            </section>
+
+            <section className="mobileSupportSection">
+              <h3 className="mobileSupportTitle">iPhone: add to Home Screen</h3>
+              <ol className="mobileSupportList">
+                <li>Open Patient Finder in Safari.</li>
+                <li>Tap the Share button (square with an up arrow).</li>
+                <li>Select Add to Home Screen.</li>
+                <li>Rename it if you want, then tap Add.</li>
+              </ol>
+            </section>
+          </div>
+        </div>
         <ThemePicker theme={theme} setTheme={applyTheme} />
       </div>
     );

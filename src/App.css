@@ -937,20 +937,13 @@
   flex-wrap: wrap;
 }
 
-.workspaceMobilePagerRow {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.workspaceMobilePagerRow .btn,
-.workspaceMobilePagerRow .btn.ghost {
-  flex: 1 1 140px;
-}
-
 .workspaceMobileHeroActions .btn,
 .workspaceMobileHeroActions .btn.ghost {
   flex: 1 1 160px;
+}
+
+.workspaceMobileHeroActions .workspaceMobileMenuBtn {
+  flex: 1 1 100%;
 }
 
 .workspaceMobileHeroActions .btn.ghost.active {
@@ -2643,6 +2636,59 @@
 }
 
 .panelBody{ padding:12px; }
+
+.mobileSupportPanel {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.mobileSupportBody {
+  display: grid;
+  gap: 14px;
+}
+
+.mobileSupportSection {
+  border: 1px solid var(--border-med);
+  background: var(--bg-section);
+  border-radius: 16px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.mobileSupportTitle {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.mobileSupportText {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-dim);
+}
+
+.mobileSupportActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mobileSupportList {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 7px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+@media (max-width: 720px) {
+  .mobileSupportActions .btn,
+  .mobileSupportActions .btn.ghost {
+    width: 100%;
+  }
+}
 
 /* ---------- Tabs ---------- */
 
