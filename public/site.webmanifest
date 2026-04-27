@@ -1,6 +1,6 @@
 {
-  "name": "Patient Finder",
-  "short_name": "Patient Finder",
+  "name": "patientfinder",
+  "short_name": "patientfinder",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b1220",

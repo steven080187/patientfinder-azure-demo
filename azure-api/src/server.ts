@@ -4,5 +4,5 @@ import { env } from "./config.js";
 const app = createApp();
 
 app.listen(env.PORT, () => {
-  console.log(`Patient Finder Azure API listening on ${env.PORT}`);
+  console.log(`patientfinder Azure API listening on ${env.PORT}`);
 });

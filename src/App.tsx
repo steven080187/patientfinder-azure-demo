@@ -2833,7 +2833,7 @@ export default function App() {
           {!isMobileWorkspace && !privacyLocked ? (
             <aside className="workspaceSidebar">
               <button className="workspaceBrand compact unlocked" onClick={() => setPrivacyLocked(true)}>
-                <img className="workspaceLogo compact unlocked" src={patientFinderLogo} alt="Patient Finder logo" />
+                <img className="workspaceLogo compact unlocked" src={patientFinderLogo} alt="patientfinder logo" />
               </button>
 
               <button
@@ -2937,7 +2937,7 @@ export default function App() {
             {isMobileWorkspace ? (
               <section className="workspaceMobileHero">
                 <button className={privacyLocked ? "workspaceMobileBrand locked" : "workspaceMobileBrand unlocked"} onClick={() => setPrivacyLocked(true)}>
-                  <img className="workspaceMobileLogo" src={patientFinderLogo} alt="Patient Finder logo" />
+                  <img className="workspaceMobileLogo" src={patientFinderLogo} alt="patientfinder logo" />
                 </button>
 
                 <div className="workspaceMobileStatusRow">
@@ -3005,7 +3005,7 @@ export default function App() {
               ) : (
                 <div className="workspaceDesktopLockStage">
                   <button className="workspaceBrand hero locked" onClick={() => setPrivacyLocked(false)}>
-                    <img className="workspaceLogo hero locked" src={patientFinderLogo} alt="Patient Finder logo" />
+                    <img className="workspaceLogo hero locked" src={patientFinderLogo} alt="patientfinder logo" />
                   </button>
                   <button className="workspaceUnlockBtn" onClick={() => setPrivacyLocked(false)}>
                     Unlock
@@ -3555,7 +3555,7 @@ export default function App() {
               {documentScannerInstallUrl ? (
                 <>
                   <div className="mobileSupportText">
-                    Install the Android scanner app for document capture and upload.
+                    This is a separate Android scanner app for document capture and upload only. It is not the patientfinder Home Screen app.
                   </div>
                   <div className="mobileSupportActions">
                     <button
@@ -3587,9 +3587,12 @@ export default function App() {
             </section>
 
             <section className="mobileSupportSection">
-              <h3 className="mobileSupportTitle">iPhone: add to Home Screen</h3>
+              <h3 className="mobileSupportTitle">iPhone Home Screen app (patientfinder)</h3>
+              <div className="mobileSupportText">
+                This installs patientfinder from Safari to your iPhone Home Screen. Use this for patientfinder access, not document scanning.
+              </div>
               <ol className="mobileSupportList">
-                <li>Open Patient Finder in Safari.</li>
+                <li>Open patientfinder in Safari.</li>
                 <li>Tap the Share button (square with an up arrow).</li>
                 <li>Select Add to Home Screen.</li>
                 <li>Rename it if you want, then tap Add.</li>
@@ -7062,7 +7065,7 @@ function AzureDemoLoginScreen({
   return (
     <div className="authCard">
       <div className="authBrand">
-        <img className="authLogo" src={patientFinderLogo} alt="Patient Finder logo" />
+        <img className="authLogo" src={patientFinderLogo} alt="patientfinder logo" />
       </div>
       <AuthRosterSourcePicker />
       <div className="authSub">Use one of the seeded demo accounts to show how case loads stick to the signed-in counselor.</div>
@@ -7134,7 +7137,7 @@ function EntraLoginScreen({
   return (
     <div className="authCard">
       <div className="authBrand">
-        <img className="authLogo" src={patientFinderLogo} alt="Patient Finder logo" />
+        <img className="authLogo" src={patientFinderLogo} alt="patientfinder logo" />
       </div>
       <div className="authSub">Sign in with your NCADD Microsoft account.</div>
       <AuthRosterSourcePicker />

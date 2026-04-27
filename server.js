@@ -18,5 +18,5 @@ app.get("/{*splat}", (_req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Patient Finder web server listening on ${port}`);
+  console.log(`patientfinder web server listening on ${port}`);
 });
