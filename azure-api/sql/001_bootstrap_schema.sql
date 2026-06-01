@@ -23,6 +23,7 @@ create table if not exists public.patients (
   full_name text,
   mrn text,
   external_id text,
+  date_of_birth date,
   status public.patient_status not null default 'new',
   location text,
   intake_date date,
@@ -34,6 +35,9 @@ create table if not exists public.patients (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table if exists public.patients
+  add column if not exists date_of_birth date;
 
 create index if not exists patients_full_name_idx on public.patients(full_name);
 create index if not exists patients_status_idx on public.patients(status);

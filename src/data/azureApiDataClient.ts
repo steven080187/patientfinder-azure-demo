@@ -1,4 +1,5 @@
 import type {
+  AiGeneratedNote,
   AzureDemoUser,
   DashboardPayload,
   DataClient,
@@ -6,6 +7,7 @@ import type {
   LiveGroupDetailResponse,
   LiveGroupStartResponse,
   PatientDocumentSummary,
+  PatientVaultDocumentSummary,
   PatientsPagePayload,
   PublicGroupSessionInfo,
 } from "./types";
@@ -28,7 +30,14 @@ export function clearAzureApiDocumentBlobCache() {
 }
 
 function getApiBaseUrl() {
-  const apiBaseUrl = import.meta.env.VITE_AZURE_API_BASE_URL?.trim();
+  const configuredBaseUrl = import.meta.env.VITE_AZURE_API_BASE_URL?.trim();
+  const overrideKey = "patientfinder.azure-demo.apiBaseUrlOverride.v1";
+  const rawOverrideBaseUrl =
+    typeof window !== "undefined" ? window.localStorage.getItem(overrideKey)?.trim() : null;
+  const isAllowedOverride = (value: string) => /^https?:\/\//i.test(value) || value.startsWith("/");
+  const overrideBaseUrl =
+    rawOverrideBaseUrl && isAllowedOverride(rawOverrideBaseUrl) ? rawOverrideBaseUrl : null;
+  const apiBaseUrl = overrideBaseUrl || configuredBaseUrl;
   if (!apiBaseUrl) {
     throw new Error("Missing VITE_AZURE_API_BASE_URL. Configure an explicit Azure API URL.");
   }
@@ -279,6 +288,10 @@ export const azureApiDataClient: DataClient = {
     const payload = await requestJson<{ documents: PatientDocumentSummary[] }>(`/api/patients/${patientId}/documents`);
     return payload.documents ?? [];
   },
+  async getPatientVaultDocuments(patientId: string) {
+    const payload = await requestJson<{ documents: PatientVaultDocumentSummary[] }>(`/api/patients/${patientId}/vault-documents`);
+    return payload.documents ?? [];
+  },
   async downloadPatientDocument(documentId: string) {
     const cacheEntry = documentBlobCache.get(documentId);
     if (cacheEntry && cacheEntry.expiresAt > Date.now()) {
@@ -303,6 +316,31 @@ export const azureApiDataClient: DataClient = {
     documentBlobCache.delete(documentId);
     await deleteJson(`/api/patient-documents/${documentId}`);
   },
+  async uploadVaultPdf(patientId: string, payload: { documentType: string; fileName?: string; pdfBase64: string }) {
+    const response = await sendJson<{ document: PatientVaultDocumentSummary }>(`/api/patients/${patientId}/vault/upload-file`, payload);
+    return response.document;
+  },
+  async uploadVaultText(patientId: string, payload: { documentType: string; text: string; fileName?: string }) {
+    const response = await sendJson<{ document: PatientVaultDocumentSummary }>(`/api/patients/${patientId}/vault/paste-text`, payload);
+    return response.document;
+  },
+  async generateAiPatientNote(
+    patientId: string,
+    payload: {
+      noteType:
+        | "problem_list"
+        | "problem_list_review"
+        | "problem_list_note"
+        | "treatment_plan"
+        | "medical_necessity_note"
+        | "discharge_summary"
+        | "discharge_note";
+      reviewContext?: { additions?: string; completions?: string };
+    }
+  ) {
+    const response = await sendJson<AiGeneratedNote>(`/api/patients/${patientId}/ai/generate-note`, payload);
+    return response;
+  },
   async createPatient(payload) {
     const response = await sendJson<{ patient: unknown }>("/api/patients", payload);
     return response.patient;
@@ -321,7 +359,8 @@ export const azureApiDataClient: DataClient = {
     await deleteJson(`/api/patients/${patientId}/case-assignment`);
   },
   async saveCompliance(patientId, payload) {
-    await sendJson(`/api/patients/${patientId}/compliance`, payload);
+    const response = await sendJson<{ compliance: unknown | null }>(`/api/patients/${patientId}/compliance`, payload);
+    return response.compliance;
   },
   async saveRosterDetails(patientId, payload) {
     await sendJson(`/api/patients/${patientId}/roster-details`, payload);

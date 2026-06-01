@@ -3,6 +3,7 @@ export type PatientRow = {
   full_name: string | null;
   mrn: string | null;
   external_id: string | null;
+  date_of_birth: string | null;
   status: string | null;
   location: string | null;
   intake_date: string | null;

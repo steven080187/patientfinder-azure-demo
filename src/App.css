@@ -542,17 +542,27 @@
 .homeFooter{ margin-top:6px; font-size:12px; opacity:0.65; }
 
 .workspacePage {
-  padding: 20px;
+  padding: 12px 20px 8px;
+  height: 100dvh;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.workspacePage.canvasScrollEnabled {
+  height: auto;
+  min-height: 100vh;
+  overflow: visible;
 }
 
 .workspaceShell {
   width: 100%;
-  max-width: 1480px;
+  max-width: none;
+  height: 100%;
   margin: 0 auto;
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
+  gap: 10px;
+  align-items: stretch;
 }
 
 .workspaceShell.locked {
@@ -560,7 +570,6 @@
 }
 
 .workspaceSidebar,
-.workspaceBoard,
 .workspaceAgendaCard,
 .workspaceRosterCard,
 .workspacePreviewCard {
@@ -572,11 +581,12 @@
 
 .workspaceSidebar {
   position: sticky;
-  top: 12px;
+  top: 0;
+  margin-top: 0;
   padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -617,9 +627,8 @@
 }
 
 .workspaceSidebar > .workspaceSidebarSection:last-of-type {
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-med);
+  padding-top: 0;
+  border-top: 0;
 }
 
 .workspaceSidebarSection.compactControls {
@@ -650,14 +659,16 @@
 }
 
 .workspaceBrand.compact {
-  padding: 9px 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .workspaceBrand.compact.unlocked {
-  border-color: rgba(82, 200, 137, 0.28);
-  background:
-    linear-gradient(180deg, rgba(82, 200, 137, 0.18), rgba(71, 122, 255, 0.08)),
-    var(--bg-card);
+  border-color: transparent;
+  background: transparent;
 }
 
 .workspaceBrand.hero {
@@ -829,8 +840,10 @@
 .workspaceMain {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 6px;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 .workspaceMain.desktopLocked {
@@ -1066,13 +1079,13 @@
 .workspaceSummaryBar {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .workspaceDesktopRevealRow {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .workspaceSummaryItem {
@@ -1080,7 +1093,7 @@
   border: 1px solid var(--border);
   background: var(--bg-card);
   box-shadow: var(--shadow-card);
-  padding: 14px 16px;
+  padding: 11px 13px;
 }
 
 .workspaceSummaryItem.interactive {
@@ -1124,15 +1137,15 @@
 
 .workspaceSummaryItem strong {
   display: block;
-  margin-top: 8px;
-  font-size: 28px;
+  margin-top: 6px;
+  font-size: 24px;
   line-height: 1;
   letter-spacing: -0.05em;
 }
 
 .workspaceSummaryItem small {
   display: block;
-  margin-top: 6px;
+  margin-top: 4px;
   font-size: 12px;
   color: var(--color-dim);
 }
@@ -1184,7 +1197,20 @@
 }
 
 .workspaceBoard {
-  padding: 14px;
+  padding: 0 8px 8px 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspaceBoard.viewportLocked {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .workspaceBoardHeader {
@@ -1197,13 +1223,21 @@
 .workspaceFilters {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .workspaceSearchWrap {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 100%;
+}
+
+.workspaceSearchControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.015fr) minmax(0, 0.985fr);
+  gap: 10px;
+  align-items: start;
 }
 
 .workspaceSearch {
@@ -1211,12 +1245,18 @@
   border-radius: 20px;
   border: 1px solid var(--border);
   background: var(--bg-input);
-  padding: 16px 18px;
+  padding: 13px 18px;
   outline: none;
   font-size: 16px;
   font-weight: 700;
   color: inherit;
   box-sizing: border-box;
+}
+
+.workspaceSearchControls > .workspaceSearchWrap,
+.workspaceSearchControls > .workspaceFilterRow {
+  align-self: start;
+  margin-top: 0;
 }
 
 .workspaceSearchHint {
@@ -1227,8 +1267,205 @@
 .workspaceFilterRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
+}
+
+.workspaceFilterRowRight {
+  justify-content: flex-start;
+  align-content: center;
+}
+
+.workspaceGlanceBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+}
+
+.workspaceGlanceBtn.active {
+  border-color: var(--border-strong);
+  background:
+    linear-gradient(180deg, rgba(71, 122, 255, 0.14), rgba(77, 195, 179, 0.06)),
+    var(--bg-card);
+}
+
+.attendanceSectionTopRow {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.attendanceToggleBtn {
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+
+.attendanceToggleBtn.on {
+  border-color: var(--border-strong);
+  background:
+    linear-gradient(180deg, rgba(71, 122, 255, 0.14), rgba(77, 195, 179, 0.06)),
+    var(--bg-card);
+}
+
+.attendancePanelHeadRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.attendanceHeadTiles {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+}
+
+.attendanceHeadTile {
+  padding: 4px 6px;
+  flex: 0 0 auto;
+  min-width: 56px;
+}
+
+.attendancePanelHeadRow .attendanceToggleBtn {
+  margin-left: auto;
+}
+
+.attendanceHeadTile .label {
+  font-size: 10px;
+}
+
+.attendanceHeadTile .value {
+  font-size: 12px;
+}
+
+.attendanceSectionDisabled {
+  opacity: 0.54;
+}
+
+.attendanceFieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.attendanceWeekdayRow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+}
+
+.attendanceWeekdayRow .multiCheckItem {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  min-height: 44px;
+  padding: 4px 2px;
+  gap: 2px;
+}
+
+.attendanceWeekdayRow .multiCheckItem input[type="checkbox"] {
+  margin: 0;
+}
+
+.attendanceRegimenSplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.attendanceRegimenCol {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attendanceScheduleRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.attendanceBottomRow {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.attendanceBottomTiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 0 !important;
+  flex: 1;
+}
+
+.diamondCtrlBtn {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 10px;
+  transform: rotate(45deg);
+}
+
+.diamondCtrlGlyph {
+  transform: rotate(-45deg);
+  display: inline-block;
+}
+
+.dropdownAnchor {
+  position: relative;
+}
+
+.diamondMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  min-width: 190px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: #121820;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: none;
+  display: grid;
+  gap: 4px;
+}
+
+.diamondMenuItem {
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid var(--border-med);
+  background: #1a2431;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 9px;
+}
+
+.diamondMenuItem.on {
+  border-color: var(--border-strong);
+  background:
+    linear-gradient(180deg, rgba(71, 122, 255, 0.14), rgba(77, 195, 179, 0.06)),
+    var(--bg-card);
 }
 
 .workspaceResultsCount {
@@ -1238,7 +1475,7 @@
 }
 
 .workspaceContentGrid {
-  margin-top: 12px;
+  margin-top: 6px;
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) 300px;
   gap: 16px;
@@ -1247,6 +1484,29 @@
 
 .workspaceContentGrid.singleColumn {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.workspaceBoard.viewportLocked .workspaceContentGrid.singleColumn {
+  flex: 1;
+  min-height: 0;
+}
+
+.workspaceBoard.viewportLocked:not(.splitMode) .workspaceContentGrid.singleColumn {
+  overflow-y: auto;
+  overflow-x: visible;
+  padding-right: 6px;
+}
+
+.workspaceBoard.viewportLocked.splitMode .workspaceContentGrid.singleColumn {
+  overflow: hidden;
+}
+
+.workspaceBoard.viewportLocked .workspaceRosterCard,
+.workspaceBoard.viewportLocked .workspacePreviewCard {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .workspacePrivacyCard {
@@ -1537,15 +1797,29 @@
 
 .workspaceSplit {
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
+  height: calc(100dvh - 150px);
+  min-height: 0;
+  overflow: hidden;
+  align-items: start;
+}
+
+.workspaceBoard.viewportLocked .workspaceSplit {
+  height: 100%;
+  min-height: 0;
 }
 
 .workspaceSplitList {
-  padding: 14px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: visible;
 }
 
 .workspaceSplitRow {
@@ -1553,12 +1827,43 @@
   border-radius: 20px;
   border: 1px solid var(--border-med);
   background: var(--bg-row);
-  padding: 14px;
+  padding: 10px 11px;
   text-align: left;
   color: inherit;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+}
+
+.workspaceSplitGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color) 82%, var(--accent) 18%);
+}
+
+.workspaceSplitField strong {
+  color: color-mix(in srgb, var(--accent) 62%, var(--color) 38%);
+}
+
+.workspaceSplitNotes {
+  grid-column: 1 / -1;
+}
+
+.workspaceSplitNextUp {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border-med);
+  background: var(--bg-section);
+  padding: 6px 8px;
+}
+
+.workspaceSplitNextUp .workspaceTone[role="button"] {
+  cursor: pointer;
 }
 
 .workspaceSplitRow.selected,
@@ -1568,15 +1873,28 @@
   background: var(--bg-row-active);
 }
 
-.highlightRingNormal {
+.workspaceRosterTile.selected {
   box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--border-strong) 65%, transparent),
+    0 14px 28px color-mix(in srgb, var(--bg-row-active) 55%, transparent);
+  transform: translateY(-1px);
+}
+
+.highlightRingNormal {
+  border-color: rgba(255, 204, 41, 0.72) !important;
+  background: color-mix(in srgb, var(--bg-row-active) 76%, rgba(255, 204, 41, 0.24)) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 204, 41, 0.52),
     0 0 0 2px rgba(255, 204, 41, 0.95),
     0 0 0 5px rgba(255, 204, 41, 0.18);
   animation: highlightPulseNormal 2.2s ease-in-out infinite;
 }
 
 .highlightRingUrgent {
+  border-color: rgba(232, 74, 74, 0.8) !important;
+  background: color-mix(in srgb, var(--bg-row-active) 72%, rgba(232, 74, 74, 0.24)) !important;
   box-shadow:
+    inset 0 0 0 1px rgba(232, 74, 74, 0.6),
     0 0 0 2px rgba(232, 74, 74, 0.96),
     0 0 0 6px rgba(232, 74, 74, 0.2);
   animation: highlightPulseUrgent 1.55s ease-in-out infinite;
@@ -1617,13 +1935,39 @@
 
 .workspaceSplitIdentity strong,
 .workspaceCellIdentity strong {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .workspaceSplitIdentity span,
 .workspaceCellIdentity span {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-dim);
+}
+
+.workspaceSplitMetaInline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.workspaceSplitMetaText {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.workspaceSplitIdentity .workspaceSplitMetaTextSage {
+  color: #d89bff;
+}
+
+.workspaceSplitIdentity .workspaceSplitMetaTextProgram {
+  color: #88b8ff;
+}
+
+.workspaceSplitIdentity .workspaceSplitMetaTextDoc {
+  color: #ff7a55;
 }
 
 .workspaceSplitSignals,
@@ -1640,13 +1984,143 @@
   padding: 14px;
 }
 
+.workspacePreviewCard {
+  position: sticky;
+  top: 12px;
+}
+
+.workspaceMiniSheetPanel {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.workspaceSheetMiniWrap {
+  height: 100%;
+}
+
+.workspaceSheet.workspaceSheetMini {
+  max-height: none;
+}
+
+.workspaceSplitPatientSheet {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: visible;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+/* Compact patient-sheet rendering inside split right pane */
+.workspaceSplitPatientSheet .hero {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.workspaceSplitPatientSheet .heroName {
+  font-size: 20px;
+}
+
+.workspaceSplitPatientSheet .heroMeta {
+  font-size: 12px;
+}
+
+.workspaceSplitPatientSheet .tabs {
+  gap: 6px;
+  margin: 8px 0 6px 0;
+}
+
+.workspaceSplitPatientSheet .tabBtn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.workspaceSplitPatientSheet .panel {
+  border-radius: 16px;
+}
+
+.workspaceSplitPatientSheet .panelHead {
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.workspaceSplitPatientSheet .panelBody {
+  padding: 10px;
+}
+
+.workspaceSplitPatientSheet .grid3 {
+  gap: 8px;
+}
+
+.workspaceSplitPatientSheet .tile {
+  padding: 10px;
+  border-radius: 12px;
+}
+
+.workspaceSplitPatientSheet .value {
+  font-size: 14px;
+}
+
+.workspaceSplitPatientSheet .quickChecklist {
+  gap: 8px;
+}
+
+.workspaceSplitPatientSheet .quickCheckItem {
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.workspaceSplitPatientSheet .btn,
+.workspaceSplitPatientSheet .btn.ghost,
+.workspaceSplitPatientSheet .select,
+.workspaceSplitPatientSheet .authInput,
+.workspaceSplitPatientSheet textarea {
+  min-height: 34px;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.workspaceSplitPatientSheet .columns,
+.workspaceSplitPatientSheet .formGrid,
+.workspaceSplitPatientSheet .addGrid,
+.workspaceSplitPatientSheet .aiWorkspace,
+.workspaceSplitPatientSheet .tileGrid,
+.workspaceSplitPatientSheet .summaryGrid,
+.workspaceSplitPatientSheet .riskGrid,
+.workspaceSplitPatientSheet .carePlanGrid {
+  grid-template-columns: 1fr;
+}
+
+.workspaceSplitPatientSheet .aiCol {
+  padding: 12px;
+}
+
+.workspaceSplitPatientSheet .aiColGenerate {
+  border-left: 0;
+  border-top: 1px solid color-mix(in srgb, #5ea3ff 42%, var(--border) 58%);
+}
+
+.workspaceSplitPatientSheet .consentCard {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.workspaceSplitPatientSheet .consentCard > div:last-child {
+  width: 100%;
+}
+
 .workspaceTable {
   width: 100%;
 }
 
 .workspaceSheet {
   width: 100%;
-  overflow: auto;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
   scrollbar-width: thin;
   scrollbar-color: rgba(64, 78, 98, 0.78) rgba(14, 20, 30, 0.28);
 }
@@ -1672,10 +2146,8 @@
 }
 
 .workspaceSheetWrap {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
-  gap: 10px;
-  align-items: stretch;
+  position: relative;
+  display: block;
 }
 
 .workspaceSheetWrap.adminCompact .workspaceSheetHead,
@@ -1690,16 +2162,16 @@
 }
 
 .workspaceSheetWrap.adminCompact .workspaceSheetRow {
-  padding: 6px 12px;
-  font-size: 11px;
+  padding: 12px 12px;
+  font-size: 16px;
 }
 
 .workspaceSheetWrap.adminCompact .workspaceSheetName {
-  gap: 3px;
+  gap: 6px;
 }
 
 .workspaceSheetWrap.adminCompact .workspaceSheetName strong {
-  font-size: 12px;
+  font-size: 18px;
 }
 
 .workspaceSheetWrap.adminCompact .workspaceTone {
@@ -1727,8 +2199,10 @@
 }
 
 .workspaceSheetFloatingArrows {
-  position: relative;
-  align-self: stretch;
+  position: absolute;
+  top: 6px;
+  right: 0;
+  bottom: 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
@@ -1846,67 +2320,135 @@
 
 .workspaceSheetHead,
 .workspaceSheetRow {
-  min-width: 2260px;
+  min-width: 3100px;
   display: grid;
   grid-template-columns:
-    100px
-    220px
-    110px
+    212px
+    118px
+    132px
+    144px
+    166px
     150px
-    170px
-    110px
-    130px
-    130px
-    130px
-    150px
-    130px
-    140px
-    130px
-    140px
-    90px
+    126px
+    112px
+    126px
     110px
     120px
+    112px
     120px
-    minmax(240px, 1fr);
-  gap: 10px;
+    136px
+    152px
+    152px
+    420px;
+  gap: 8px;
   align-items: stretch;
 }
 
 .workspaceSheetHead {
   position: sticky;
   top: 0;
-  z-index: 2;
-  padding: 10px 16px;
+  z-index: 6;
+  padding: 10px 8px;
   font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  opacity: 0.62;
-  border-bottom: 1px solid var(--border-med);
-  background: var(--bg-panel-head);
+  opacity: 1;
+  border-bottom: 1px solid var(--border-strong);
+  background: #111a24;
+  color: color-mix(in srgb, var(--text) 72%, transparent);
+  backdrop-filter: none;
 }
 
 .workspaceSheetRow {
   width: 100%;
-  padding: 12px 16px;
+  padding: 14px 8px;
   text-align: left;
   color: inherit;
   background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--border-med);
-  font-size: 12px;
+  border: 1px solid var(--border-med);
+  border-radius: 12px;
+  font-size: 16px;
+  margin-bottom: 8px;
 }
 
 .workspaceSheetRow:last-child {
-  border-bottom: 0;
+  margin-bottom: 0;
 }
 
 .workspaceSheetRow.alert {
-  background: rgba(235,119,119,0.08);
+  background: transparent;
 }
 
 .workspaceSheetRow.watch {
-  background: rgba(243,163,94,0.08);
+  background: transparent;
+}
+
+.workspaceSheetRow.selected {
+  background: transparent;
+  box-shadow: none;
+  border-bottom-color: var(--border-strong);
+}
+
+.workspaceSheetRow.selected .sheetCellInput,
+.workspaceSheetRow.selected .sheetCellSelect,
+.workspaceSheetRow.selected .sheetCellMulti {
+  background: var(--bg-input);
+  border-color: var(--border);
+}
+
+.workspaceSheetHead > div {
+  padding-inline: 5px;
+  background: #111a24;
+}
+
+.workspaceSheetSpacer {
+  pointer-events: none;
+  visibility: hidden;
+}
+
+/* Next Up workflow lane (5th column) */
+.workspaceSheetHead > div:nth-child(4),
+.workspaceSheetRow > div:nth-child(4) {
+  margin-left: 0;
+}
+
+.workspaceSheetHead > div:nth-child(5),
+.workspaceSheetRow > div:nth-child(5) {
+  position: relative;
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 6px;
+  padding-right: 6px;
+  border-left: 0;
+  border-right: 0;
+  background: rgba(122, 200, 255, 0.08);
+  border-radius: 8px;
+}
+
+.workspaceSheetHead > div:nth-child(5) {
+  background: #111a24;
+}
+
+.workspaceSheetHead > div:nth-child(5) {
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  font-size: 11.5px;
+  color: #9fd7ff;
+  text-align: center;
+}
+
+.workspaceSheetRow > div:nth-child(5) {
+  text-align: center;
+}
+
+.workspaceSheetRow > div:nth-child(5) .workspaceSetAction {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.workspaceSheetHead > div:nth-child(7) {
+  white-space: nowrap;
 }
 
 .workspaceSheetName {
@@ -1916,7 +2458,81 @@
 }
 
 .workspaceSheetName strong {
-  font-size: 14px;
+  font-size: 18px;
+}
+
+.workspaceMetaInline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.workspaceMetaText {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.workspaceMetaTextSage {
+  color: #d89bff;
+}
+
+.workspaceMetaTextProgram {
+  color: #88b8ff;
+}
+
+.workspaceMetaTextDoc {
+  color: #ff7a55;
+}
+
+.workspaceSheetName .workspaceMetaTextSage {
+  color: #d89bff;
+}
+
+.workspaceSheetName .workspaceMetaTextProgram {
+  color: #88b8ff;
+}
+
+.workspaceSheetName .workspaceMetaTextDoc {
+  color: #ff7a55;
+}
+
+.workspaceMetaTextAssigned {
+  color: #7ac8ff;
+}
+
+.workspaceMetaPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  box-shadow: none;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspaceMetaPillProgram {
+  min-width: 30px;
+  justify-content: center;
+  color: #88b8ff;
+  border-color: rgba(100,160,255,0.25);
+  background: rgba(100,160,255,0.12);
+}
+
+.workspaceMetaPillDoc {
+  color: #ff7a55;
+  border-color: rgba(255,100,60,0.30);
+  background: rgba(255,100,60,0.14);
+  max-width: 132px;
 }
 
 .workspaceSheetNotes {
@@ -1925,6 +2541,62 @@
   gap: 4px;
   color: var(--color-dim);
   line-height: 1.35;
+}
+
+.workspaceSetAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  min-width: 44px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #ffda7a;
+  border: 1px solid rgba(243, 163, 94, 0.45);
+  background: rgba(243, 163, 94, 0.18);
+  cursor: pointer;
+  user-select: none;
+}
+
+.workspaceSetAction.glow {
+  box-shadow:
+    0 0 0 1px rgba(243, 163, 94, 0.28),
+    0 0 12px rgba(243, 163, 94, 0.45),
+    0 0 26px rgba(243, 163, 94, 0.28);
+  animation: workspaceSetPulse 1.4s ease-in-out infinite;
+}
+
+.workspaceSetAction.dueSoon {
+  color: #ffd5d5;
+  border: 1px solid rgba(235, 119, 119, 0.58);
+  background: rgba(191, 52, 52, 0.30);
+  box-shadow:
+    0 0 0 1px rgba(235, 119, 119, 0.34),
+    0 0 14px rgba(235, 119, 119, 0.58),
+    0 0 28px rgba(235, 119, 119, 0.34);
+  animation: workspaceSetPulse 1.2s ease-in-out infinite;
+}
+
+.workspaceTodayAction {
+  min-width: 124px;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  padding: 10px 16px;
+}
+
+@keyframes workspaceSetPulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.04);
+    filter: brightness(1.14);
+  }
 }
 
 .sheetCellInput,
@@ -2024,10 +2696,27 @@
   opacity: 0.82;
 }
 
+.workspaceNextUpDue {
+  box-shadow:
+    0 0 0 1px rgba(235, 119, 119, 0.34),
+    0 0 12px rgba(235, 119, 119, 0.48),
+    0 0 24px rgba(235, 119, 119, 0.30),
+    0 0 18px rgba(255, 214, 102, 0.42);
+  animation: workspaceSetPulse 1.15s ease-in-out infinite;
+}
+
 .workspaceCardGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 14px;
+}
+
+.workspaceCardGridTools {
+  flex: 0 0 100%;
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .workspaceRosterTile {
@@ -2047,6 +2736,12 @@
   justify-content: space-between;
   gap: 12px;
   align-items: start;
+}
+
+.workspaceTileTopActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .workspaceTileGrid {
@@ -2071,6 +2766,79 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   opacity: 0.56;
+}
+
+.workspaceRosterTileV3 {
+  min-width: 300px;
+  min-height: 320px;
+  align-content: start;
+  gap: 10px;
+}
+
+.workspaceTileCoreGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workspaceTileCoreGrid .workspaceMiniBlock {
+  padding: 10px;
+}
+
+.workspaceTileExtrasHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspaceTileExtras {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 8px;
+  min-height: 120px;
+}
+
+.workspaceTileExtras .workspaceTone {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-med);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
+    var(--bg-section);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.workspaceTileExtras .workspaceTone:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.16);
+}
+
+.workspaceWidgetIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25em;
+  height: 1.25em;
+  margin-right: 5px;
+  border-radius: 999px;
+  font-size: 1.1em;
+  border: 1px solid rgba(120, 120, 120, 0.28);
+  background: rgba(120, 120, 120, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.workspaceWidgetValue {
+  font-size: 1em;
 }
 
 @media (max-width: 1024px) {
@@ -2208,6 +2976,10 @@
 
   .workspaceFilters {
     gap: 12px;
+  }
+
+  .workspaceSearchControls {
+    display: block;
   }
 
   .workspaceFilterRow {
@@ -2529,11 +3301,13 @@
 
 .search, .select{
   border-radius:14px;
-  border:1px solid var(--border);
-  background: var(--bg-input);
+  border:1px solid color-mix(in srgb, var(--border) 58%, #76b8ff 42%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #7ec8ff 11%, var(--bg-input) 89%), var(--bg-input));
   padding:10px 12px;
   outline:none;
   color:inherit;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 16%, transparent 84%);
 }
 
 .search{ flex:1; min-width:260px; }
@@ -2541,18 +3315,28 @@
 
 .btn{
   border-radius:14px;
-  border:1px solid var(--border);
-  background: var(--bg-btn);
+  border:1px solid color-mix(in srgb, var(--border) 56%, #72b9ff 44%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #5ea3ff 22%, var(--bg-btn) 78%), color-mix(in srgb, #35c6a8 12%, var(--bg-btn) 88%));
   padding:10px 12px;
   cursor:pointer;
   font-weight:900;
   color:inherit;
+  transition: transform 120ms ease, box-shadow 150ms ease, border-color 150ms ease, filter 150ms ease;
+  box-shadow: 0 6px 16px color-mix(in srgb, #2f7bf5 14%, transparent 86%);
+}
+
+.btn:hover{
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--border) 36%, #69c8ac 64%);
+  box-shadow: 0 10px 22px color-mix(in srgb, #2f7bf5 20%, transparent 80%);
 }
 
 .btn.ghost{
-  background: var(--bg-input);
-  border-color: var(--border-med);
+  background: linear-gradient(135deg, color-mix(in srgb, #9ec8ff 8%, var(--bg-input) 92%), var(--bg-input));
+  border-color: color-mix(in srgb, var(--border-med) 58%, #7ab8ff 42%);
   opacity:0.92;
+  box-shadow: none;
 }
 
 .btn.btnHighlight {
@@ -2631,7 +3415,8 @@
 .panelHead{
   padding:14px 16px;
   font-weight:950;
-  background: var(--bg-panel-head);
+  background:
+    linear-gradient(120deg, color-mix(in srgb, #2f7bf5 18%, var(--bg-panel-head) 82%), color-mix(in srgb, #2ab88f 12%, var(--bg-panel-head) 88%));
   border-bottom:1px solid var(--border-med);
 }
 
@@ -2701,18 +3486,70 @@
 
 .tabBtn{
   border-radius:999px;
-  border:1px solid var(--border);
-  background: var(--bg-input);
+  border:1px solid color-mix(in srgb, var(--border) 62%, #8bb8ff 38%);
+  background: linear-gradient(135deg, color-mix(in srgb, #5ea3ff 12%, var(--bg-input) 88%), var(--bg-input));
   padding:8px 12px;
   cursor:pointer;
   font-weight:900;
-  opacity:0.85;
+  opacity:0.92;
   color:inherit;
+  transition: transform 120ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.tabBtn:hover{
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--border) 38%, #69c8ac 62%);
+  box-shadow: 0 5px 14px color-mix(in srgb, #5ea3ff 14%, transparent 86%);
 }
 
 .tabBtn.on{
-  background: var(--bg-btn);
+  background: linear-gradient(135deg, color-mix(in srgb, #2f7bf5 42%, var(--bg-btn) 58%), color-mix(in srgb, #2ab88f 22%, var(--bg-btn) 78%));
+  border-color: color-mix(in srgb, #8fd4ff 60%, var(--border) 40%);
+  color: #eef6ff;
   opacity:1;
+  box-shadow: 0 7px 18px color-mix(in srgb, #2f7bf5 26%, transparent 74%);
+}
+
+.patientTabMenu {
+  margin: 12px 0 8px;
+  width: fit-content;
+  max-width: 220px;
+}
+
+.patientTabMenuControl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 52%, #7bbcff 48%);
+  background:
+    linear-gradient(140deg, color-mix(in srgb, #4f97ff 16%, var(--bg-modal) 84%), color-mix(in srgb, #39c3a8 10%, var(--bg-modal) 90%));
+  backdrop-filter: none;
+  color: inherit;
+  padding: 8px 12px;
+  font-weight: 800;
+  width: 220px;
+  box-sizing: border-box;
+}
+
+.patientTabMenuIcon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.patientTabMenuSelect {
+  margin-left: 2px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  padding: 3px 0;
+  font-weight: 700;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
 }
 
 /* ---------- Simple form grid ---------- */
@@ -2735,7 +3572,7 @@
   text-align:left;
   border-radius:16px;
   border:1px solid var(--border-med);
-  background: var(--bg-row);
+  background: linear-gradient(125deg, color-mix(in srgb, #78b7ff 8%, var(--bg-row) 92%), var(--bg-row));
   padding:12px;
   cursor:pointer;
   display:flex;
@@ -2744,7 +3581,9 @@
   margin-bottom:8px;
 }
 
-.row:hover{ background: var(--bg-row-hover); }
+.row:hover{
+  background: linear-gradient(125deg, color-mix(in srgb, #54b8a1 14%, var(--bg-row-hover) 86%), var(--bg-row-hover));
+}
 
 .row.on{
   background: var(--bg-row-active);
@@ -2825,7 +3664,8 @@
 .tileCard {
   border-radius:18px;
   border:1px solid var(--border);
-  background:var(--bg-card);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #5ea3ff 8%, var(--bg-card) 92%), var(--bg-card));
   padding:14px 16px;
   cursor:pointer;
   text-align:left;
@@ -2837,7 +3677,7 @@
   transition:background 0.12s, box-shadow 0.12s, transform 0.12s;
 }
 .tileCard:hover {
-  background:var(--bg-row-hover);
+  background:linear-gradient(135deg, color-mix(in srgb, #47c0a0 13%, var(--bg-row-hover) 87%), var(--bg-row-hover));
   box-shadow:0 6px 22px rgba(0,0,0,0.14);
   transform:translateY(-1px);
 }
@@ -3199,6 +4039,94 @@
   background: rgba(235,119,119,0.12);
 }
 
+.overviewUnifiedCard {
+  margin-top: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, #6fb7ff 50%);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, #4f97ff 10%, var(--bg-section) 90%), color-mix(in srgb, #2ab88f 7%, var(--bg-section) 93%));
+  box-shadow: 0 10px 24px color-mix(in srgb, #2f7bf5 10%, transparent 90%);
+}
+
+.overviewSignalRows {
+  display: grid;
+  gap: 8px;
+}
+
+.overviewSignalsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overviewSignalsHead .btnCompact {
+  transform: translateY(-7px);
+}
+
+.overviewSignalRow {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-med) 70%, #7ab8ff 30%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-input) 84%, #5ea3ff 16%);
+}
+
+.overviewSignalRow:last-child {
+  border-bottom: 0;
+}
+
+.overviewSignalRow strong {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.92;
+  color: color-mix(in srgb, var(--color) 88%, #8dc7ff 12%);
+}
+
+.overviewSignalRow span {
+  font-size: 14px;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--color) 90%, #9bd9c5 10%);
+}
+
+.overviewSignalRow.toneDefault {
+  background: color-mix(in srgb, var(--bg-input) 84%, #5ea3ff 16%);
+  border-color: color-mix(in srgb, var(--border-med) 70%, #7ab8ff 30%);
+}
+
+.overviewSignalRow.toneDue {
+  background: color-mix(in srgb, var(--bg-input) 82%, #ff9d65 18%);
+  border-color: color-mix(in srgb, var(--border-med) 62%, #ffb06a 38%);
+}
+
+.overviewSignalRow.toneClinical {
+  background: color-mix(in srgb, var(--bg-input) 82%, #7ad4a2 18%);
+  border-color: color-mix(in srgb, var(--border-med) 62%, #6fd199 38%);
+}
+
+.overviewSignalRow.toneAdmin {
+  background: color-mix(in srgb, var(--bg-input) 84%, #c38bff 16%);
+  border-color: color-mix(in srgb, var(--border-med) 64%, #b387ff 36%);
+}
+
+.overviewSignalRow.toneContact {
+  background: color-mix(in srgb, var(--bg-input) 84%, #53d4d0 16%);
+  border-color: color-mix(in srgb, var(--border-med) 64%, #4bcac6 36%);
+}
+
+.overviewSignalRow.toneDate {
+  background: color-mix(in srgb, var(--bg-input) 84%, #f2c85e 16%);
+  border-color: color-mix(in srgb, var(--border-med) 64%, #e5bd58 36%);
+}
+
+.overviewSignalRow.toneProgram {
+  background: color-mix(in srgb, var(--bg-input) 84%, #7fbcff 16%);
+  border-color: color-mix(in srgb, var(--border-med) 64%, #73b0f5 36%);
+}
+
 .carePlanGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -3209,6 +4137,20 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
+}
+
+.workflowControlsRow {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+
+.workflowControlsRow .addField {
+  min-width: 220px;
+  flex: 0 0 220px;
 }
 
 .sectionSubTitle {
@@ -3410,6 +4352,22 @@
 
 .patientWrap { padding-bottom:40px; }
 
+.patientPageHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.patientPageHead > span {
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.patientPageHead .patientActionMenu {
+  margin-left: auto;
+}
+
 .hero {
   display:flex;
   justify-content:space-between;
@@ -3418,6 +4376,12 @@
   margin-bottom:6px;
 }
 .heroName { font-size:20px; font-weight:800; letter-spacing:-0.02em; }
+.heroNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .heroMeta { font-size:13px; opacity:0.65; margin-top:4px; }
 
 .patientHeroActions {
@@ -3425,6 +4389,90 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.patientKindPill {
+  padding: 3px 8px;
+  min-height: 22px;
+  font-size: 10px;
+  border-radius: 999px;
+}
+
+.patientKindPillSelect {
+  border-width: 1px;
+  border-style: solid;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 12px) calc(50% - 1px),
+    calc(100% - 8px) calc(50% - 1px);
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  padding: 3px 20px 3px 8px;
+  cursor: pointer;
+}
+
+.patientActionMenu {
+  position: relative;
+}
+
+.patientActionMenuTrigger {
+  list-style: none;
+}
+
+.patientActionMenuTrigger::-webkit-details-marker {
+  display: none;
+}
+
+.patientActionMenuList {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  min-width: 210px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-modal);
+  box-shadow: 0 14px 28px color-mix(in srgb, #0d1525 18%, transparent 82%);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.patientActionMenuItem {
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.patientActionMenuItem:hover {
+  background: color-mix(in srgb, var(--bg-btn) 14%, transparent 86%);
+}
+
+.patientActionMenuItem.danger {
+  color: #ff8f8f;
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--color-dim);
+}
+
+.checkboxRow input[type="checkbox"] {
+  margin-top: 2px;
 }
 
 .patientStickyNote {
@@ -3480,6 +4528,12 @@
   color: var(--text);
 }
 
+.patientStickyLockNotice {
+  font-size: 12px;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--color-dim) 78%, #b03a2b 22%);
+}
+
 .patientStickyReply {
   display: grid;
   gap: 8px;
@@ -3512,11 +4566,81 @@
   font-size: 12px;
 }
 
+.overviewSubTabs .overviewTabBtn {
+  flex: 0 0 92px;
+  width: 92px;
+  min-width: 92px;
+  max-width: 92px;
+  padding: 7px 6px;
+  text-align: center;
+  justify-content: center;
+}
+
+.overviewSubTabs .rosterFieldsTabBtn {
+  flex: 0 0 124px;
+  width: 124px;
+  min-width: 124px;
+  max-width: 124px;
+  justify-content: center;
+}
+
 .grid3 {
   display:grid;
   grid-template-columns:1fr 1fr 1fr;
   gap:10px;
   margin:12px 0;
+}
+
+.intakeDateStage {
+  position: relative;
+  height: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.intakeDateBubble {
+  position: absolute;
+  right: 352px;
+  top: -120px;
+  width: 102px;
+  height: 102px;
+  border-radius: 999px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border: 1px solid color-mix(in srgb, var(--border) 55%, #7bbcff 45%);
+  background:
+    radial-gradient(circle at 32% 24%, color-mix(in srgb, #79c4ff 20%, transparent 80%), transparent 55%),
+    linear-gradient(160deg, color-mix(in srgb, #4f97ff 16%, var(--bg-section) 84%), color-mix(in srgb, #39c3a8 10%, var(--bg-section) 90%));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #c6e6ff 45%, transparent 55%),
+    0 8px 20px color-mix(in srgb, #3f8bff 22%, transparent 78%);
+  pointer-events: auto;
+  z-index: 2;
+  cursor: pointer;
+  appearance: none;
+  color: inherit;
+}
+
+.intakeDateBubble .label {
+  margin-bottom: 4px;
+  font-size: 9px;
+}
+
+.intakeDateBubble .value {
+  font-size: 11px;
+}
+
+.completionDateBubble {
+  border-color: color-mix(in srgb, var(--border) 50%, #74d9a0 50%);
+  background:
+    radial-gradient(circle at 32% 24%, color-mix(in srgb, #9df0bf 22%, transparent 78%), transparent 55%),
+    linear-gradient(160deg, color-mix(in srgb, #3abf7b 18%, var(--bg-section) 82%), color-mix(in srgb, #2d9a67 12%, var(--bg-section) 88%));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #d9fbe5 45%, transparent 55%),
+    0 8px 20px color-mix(in srgb, #2fbb74 24%, transparent 76%);
 }
 @media (max-width:600px){
   .grid3 { grid-template-columns:1fr 1fr; }
@@ -3787,6 +4911,173 @@
 .uploadLabel:hover{ background:var(--bg-row-hover); }
 .uploadLabel.disabled{ opacity:0.55; cursor:default; }
 
+/* ======================== AI Tab refresh ======================== */
+
+.aiWorkspace{
+  margin-top:14px;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:0;
+  border:1px solid var(--border);
+  border-radius:16px;
+  overflow:hidden;
+  background:
+    linear-gradient(120deg, color-mix(in srgb, #2f7bf5 15%, var(--bg-section) 85%) 0%, var(--bg-section) 48%),
+    linear-gradient(300deg, color-mix(in srgb, #2ab88f 10%, transparent 90%) 55%, transparent 100%);
+}
+
+.aiCol{
+  padding:12px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-med) 55%, transparent);
+}
+
+.aiColUpload{
+  border-color: color-mix(in srgb, #57b9ff 38%, var(--border) 62%);
+  background:
+    linear-gradient(155deg, color-mix(in srgb, #5ea3ff 14%, var(--bg-section) 86%), color-mix(in srgb, #2f7bf5 5%, var(--bg-section) 95%));
+}
+
+.aiColGenerate{
+  border-left:1px solid color-mix(in srgb, #5ea3ff 42%, var(--border) 58%);
+  border-color: color-mix(in srgb, #4dcfa8 36%, var(--border) 64%);
+  background:
+    linear-gradient(155deg, color-mix(in srgb, #4dcfa8 14%, var(--bg-section) 86%), color-mix(in srgb, #2aa884 5%, var(--bg-section) 95%));
+}
+
+.aiColTitle{
+  margin:0 0 10px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color:#89bcff;
+}
+
+.aiFileInputPlain {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.aiVaultUploadFab {
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  padding: 0;
+  margin: 4px auto 0;
+}
+
+.aiVaultUploadWrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  grid-column: 1 / -1;
+  margin-top: 10px;
+}
+
+.aiRoundActionBtn {
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  padding: 0;
+}
+
+.aiGenerateActionBtn {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.aiGenerateActionsWrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px;
+  width: 100%;
+  grid-column: 1 / -1;
+  margin-top: 8px;
+}
+
+.aiGenerateIconBtn {
+  font-size: 30px;
+}
+
+.aiColUpload .controlCenterTextarea,
+.aiColGenerate .controlCenterTextarea {
+  min-height: 120px;
+  height: 120px;
+}
+
+.aiColUpload .addGrid > .addField:first-child,
+.aiColGenerate .addGrid > .addField:first-child,
+.aiColUpload .addGrid > .addField:nth-child(2),
+.aiColGenerate .addGrid > .addField:nth-child(2) {
+  margin-top: 8px;
+}
+
+.aiColUpload .addGrid > .addField:first-child,
+.aiColUpload .addGrid > .addField:nth-child(2),
+.aiColGenerate .addGrid > .addField:first-child {
+  position: relative;
+  top: 32px;
+}
+
+.aiUploadTextWrap {
+  margin-top: 72px;
+}
+
+.aiGenerateTextWrap {
+  margin-top: 72px;
+}
+
+.aiVaultTable{
+  border-color:color-mix(in srgb, #2ab88f 30%, var(--border) 70%);
+}
+
+.attendanceHistorySection{
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.attendanceHistoryTable{
+  border-color:color-mix(in srgb, #2ab88f 30%, var(--border) 70%);
+}
+
+.attendanceHistoryTable .thead{
+  background:color-mix(in srgb, #5ea3ff 10%, var(--bg-panel-head) 90%);
+}
+
+@media (max-width:960px){
+  .aiWorkspace{
+    grid-template-columns:1fr;
+  }
+  .aiColGenerate{
+    border-left:0;
+    border-top:1px solid color-mix(in srgb, #5ea3ff 42%, var(--border) 58%);
+  }
+}
+
 /* ======================== Intake Tab redesign ======================== */
 
 .intakeTabWrap { display:flex; flex-direction:column; gap:14px; padding-top:4px; }
@@ -3840,6 +5131,27 @@
 .iInfoTile  { display:flex; flex-direction:column; gap:3px; }
 .iDimLabel  { font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(160,160,160,0.7); }
 .iInfoValue { font-size:14px; font-weight:600; }
+.iValueBtn {
+  appearance: none;
+  border: 1px dashed transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 2px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.iValueBtn:hover {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--bg-row) 86%, white 14%);
+}
+.iValueBtn:disabled {
+  cursor: default;
+}
+.iValueBtn.empty {
+  color: var(--color-dim);
+}
 .iAddressLine {
   margin-top: 12px;
   padding-top: 10px;
@@ -3941,6 +5253,25 @@
   border-color: rgba(126,207,255,0.5);
   background: rgba(126,207,255,0.06);
 }
+.iEditActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.iEditActionBtn {
+  border: 1px solid var(--border);
+  background: var(--bg-row);
+  color: inherit;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.iEditActionBtn.primary {
+  background: color-mix(in srgb, var(--bg-row) 62%, #7ecfff 38%);
+  border-color: color-mix(in srgb, var(--border) 60%, #7ecfff 40%);
+}
 .iEditSelect {
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -3957,10 +5288,41 @@
 .iHead .iEditBtn { font-size: 12px; }
 .iHead:hover .iEditBtn { opacity: 1; }
 .iEditBtnHead { margin-left: auto; }
+@media (hover: none), (pointer: coarse) {
+  .iEditBtn {
+    opacity: 0.78;
+  }
+}
 
 /* Multi-select modal */
 .multiEditCard { width: min(340px, 96vw) !important; }
 .multiCheckList { display:flex; flex-direction:column; gap:4px; }
+.addPatientCheckList {
+  max-height: 172px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-input);
+}
+.snapAddList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: start;
+}
+.aiJsonPreview {
+  max-height: 360px;
+  overflow: auto;
+  margin: 10px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
 .multiCheckItem {
   display:flex; align-items:center; gap:10px;
   font-size:13px; padding:8px 10px;

@@ -94,6 +94,14 @@ export type PatientDocumentSummary = {
   uploaded_by_email?: string | null;
 };
 
+export type PatientVaultDocumentSummary = PatientDocumentSummary;
+export type AiNoteType = "problem_list" | "problem_list_review" | "problem_list_note" | "treatment_plan" | "medical_necessity_note" | "discharge_summary" | "discharge_note";
+export type AiGeneratedNote = {
+  noteType: AiNoteType;
+  note: string;
+  templateName: string;
+};
+
 export interface DataClient {
   getDashboard(options?: { includePatients?: boolean }): Promise<DashboardPayload>;
   getPatientsPage(params: {
@@ -111,7 +119,14 @@ export interface DataClient {
   getPatient(patientId: string): Promise<unknown | null>;
   getLatestIntakeSubmission(patientId: string): Promise<unknown | null>;
   getPatientDocuments(patientId: string): Promise<PatientDocumentSummary[]>;
+  getPatientVaultDocuments(patientId: string): Promise<PatientVaultDocumentSummary[]>;
   downloadPatientDocument(documentId: string): Promise<Blob>;
+  uploadVaultPdf(patientId: string, payload: { documentType: string; fileName?: string; pdfBase64: string }): Promise<PatientVaultDocumentSummary>;
+  uploadVaultText(patientId: string, payload: { documentType: string; text: string; fileName?: string }): Promise<PatientVaultDocumentSummary>;
+  generateAiPatientNote(
+    patientId: string,
+    payload: { noteType: AiNoteType; reviewContext?: { additions?: string; completions?: string } }
+  ): Promise<AiGeneratedNote>;
   renamePatientDocument(documentId: string, payload: { originalFileName: string }): Promise<PatientDocumentSummary>;
   deletePatientDocument(documentId: string): Promise<void>;
   createPatient(payload: unknown): Promise<unknown>;
@@ -119,7 +134,7 @@ export interface DataClient {
   deletePatient(patientId: string): Promise<void>;
   saveCaseAssignment(patientId: string, payload: unknown): Promise<void>;
   clearCaseAssignment(patientId: string): Promise<void>;
-  saveCompliance(patientId: string, payload: unknown): Promise<void>;
+  saveCompliance(patientId: string, payload: unknown): Promise<unknown>;
   saveRosterDetails(patientId: string, payload: unknown): Promise<void>;
   createDrugTest(patientId: string, payload: unknown): Promise<unknown>;
   commitBilling(patientId: string, payload: unknown): Promise<{ session: unknown; billingEntry: unknown }>;

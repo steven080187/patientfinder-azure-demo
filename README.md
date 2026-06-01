@@ -34,3 +34,26 @@ npm install
 npm run build
 npm start
 ```
+
+## Microsoft Entra Sign-In
+
+Entra login is already implemented in this repo and turns on automatically when both sides are configured.
+
+Frontend (`.env.local`):
+
+```bash
+VITE_ENTRA_TENANT_ID=<tenant-guid>
+VITE_ENTRA_CLIENT_ID=<spa-app-client-id>
+VITE_ENTRA_API_SCOPE=api://<api-app-client-id>/user_impersonation
+```
+
+API (`azure-api/.env.local` or App Service settings):
+
+```bash
+ENTRA_TENANT_ID=<tenant-guid>
+ENTRA_API_CLIENT_ID=<api-app-client-id>
+# Optional override for accepted audiences:
+# ENTRA_API_AUDIENCES=api://<api-app-client-id>,<api-app-client-id>
+```
+
+Important: if your tenant requires admin consent for delegated scopes or app roles, an Entra admin must grant that consent before login/token exchange succeeds.

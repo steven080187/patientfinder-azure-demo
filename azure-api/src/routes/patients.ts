@@ -6,8 +6,32 @@ import type { IntakeSubmissionRow, PatientRow } from "../types.js";
 
 export const patientsRouter = Router();
 
+type PatientStatusEnum = "new" | "active" | "past";
+
 function normalizePatientId(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizePatientStatus(value: unknown, fallback: PatientStatusEnum = "new"): PatientStatusEnum {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === "new" || normalized === "new patient" || normalized === "new enrollee") return "new";
+  if (
+    normalized === "active" ||
+    normalized === "current" ||
+    normalized === "current patient" ||
+    normalized === "active patient" ||
+    normalized === "rss" ||
+    normalized === "rss+" ||
+    normalized === "rss_plus" ||
+    normalized === "rss plus"
+  ) {
+    return "active";
+  }
+  if (normalized === "past" || normalized === "former" || normalized === "former patient" || normalized === "inactive") {
+    return "past";
+  }
+  return fallback;
 }
 
 function logPatientFlow(event: string, details: Record<string, unknown>) {
@@ -15,6 +39,77 @@ function logPatientFlow(event: string, details: Record<string, unknown>) {
     dataSource: "postgresql",
     ...details,
   });
+}
+
+async function patchLatestIntakeJsonFromPatient(patientId: string, patch: {
+  fullName?: string | null;
+  dob?: string | null;
+  location?: string | null;
+  status?: string | null;
+  primaryProgram?: string | null;
+  counselorName?: string | null;
+  substances?: string[] | null;
+  referringAgency?: string | null;
+  medicalEligibility?: string | null;
+  matStatus?: string | null;
+  therapyTrack?: string | null;
+  medicalPhysApt?: string | null;
+  medFormStatus?: string | null;
+  notes?: string | null;
+}) {
+  const rows = await query<{ id: string; raw_json: unknown }>(
+    `select id, raw_json
+       from public.intake_submissions
+      where patient_id = $1
+      order by created_at desc
+      limit 1`,
+    [patientId]
+  );
+  const latest = rows[0];
+  if (!latest) return;
+
+  const raw = (latest.raw_json ?? {}) as Record<string, any>;
+  const sections = { ...(raw.sections ?? {}) };
+  const intake = { ...(sections.intake ?? {}) };
+  const fields = { ...(intake.fields ?? {}) };
+  const radios = { ...(intake.radios ?? {}) };
+  const multi = { ...(intake.multi ?? {}) };
+
+  if (patch.fullName != null) fields["s5::Full legal name"] = patch.fullName ?? "";
+  if (patch.dob != null) fields["s5::Date of birth"] = patch.dob ?? "";
+  if (patch.location != null) radios.location = patch.location ?? "";
+  if (patch.status != null) radios.patient_status = patch.status ?? "";
+  if (patch.primaryProgram != null) radios.primary_program = patch.primaryProgram ?? "";
+  if (patch.counselorName != null) fields["s5::Counselor"] = patch.counselorName ?? "";
+  if (patch.substances != null) multi.substances = patch.substances ?? [];
+  if (patch.referringAgency != null) radios.referring_agency = patch.referringAgency ?? "";
+  if (patch.medicalEligibility != null) radios.medical_eligibility = patch.medicalEligibility ?? "";
+  if (patch.matStatus != null) radios.mat = patch.matStatus ?? "";
+  if (patch.therapyTrack != null) radios.therapy_track = patch.therapyTrack ?? "";
+  if (patch.medicalPhysApt != null) radios.medical_phys_apt = patch.medicalPhysApt ?? "";
+  if (patch.medFormStatus != null) radios.med_form_status = patch.medFormStatus ?? "";
+  if (patch.notes != null) fields["s5::Notes"] = patch.notes ?? "";
+
+  const nextRaw = {
+    ...raw,
+    sections: {
+      ...sections,
+      intake: {
+        ...intake,
+        fields,
+        radios,
+        multi,
+      },
+    },
+  };
+
+  await query(
+    `update public.intake_submissions
+        set raw_json = $2,
+            updated_at = timezone('utc', now())
+      where id = $1`,
+    [latest.id, nextRaw]
+  );
 }
 
 patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
@@ -123,7 +218,7 @@ patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counse
 
     const dataParams = [...params, limit, offset];
     const rows = await query<PatientRow>(
-      `select p.id, p.full_name, p.mrn, p.external_id, p.status, p.location, p.intake_date, p.last_visit_date, p.next_appt_date,
+      `select p.id, p.full_name, p.mrn, p.external_id, p.date_of_birth, p.status, p.location, p.intake_date, p.last_visit_date, p.next_appt_date,
               p.primary_program, p.counselor_name, p.flags, p.created_at, p.updated_at
          ${fromSql}
          ${whereSql}
@@ -159,7 +254,7 @@ patientsRouter.get("/api/patients/:id", requireAuth, requireAnyRole("Admin", "Co
     });
 
     const rows = await query<PatientRow>(
-      `select id, full_name, mrn, external_id, status, location, intake_date, last_visit_date, next_appt_date,
+      `select id, full_name, mrn, external_id, date_of_birth, status, location, intake_date, last_visit_date, next_appt_date,
               primary_program, counselor_name, flags, created_at, updated_at
          from public.patients
         where id = $1`,
@@ -195,17 +290,18 @@ patientsRouter.post("/api/patients", requireAuth, requireAnyRole("Admin", "Intak
     const id = req.body.id || randomUUID();
     const rows = await query<PatientRow>(
       `insert into public.patients (
-          id, full_name, mrn, external_id, status, location, intake_date, last_visit_date, next_appt_date,
+          id, full_name, mrn, external_id, date_of_birth, status, location, intake_date, last_visit_date, next_appt_date,
           primary_program, counselor_name, flags
-        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-        returning id, full_name, mrn, external_id, status, location, intake_date, last_visit_date, next_appt_date,
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        returning id, full_name, mrn, external_id, date_of_birth, status, location, intake_date, last_visit_date, next_appt_date,
                   primary_program, counselor_name, flags, created_at, updated_at`,
       [
         id,
         req.body.full_name ?? null,
         req.body.mrn ?? null,
         req.body.external_id ?? null,
-        req.body.status ?? "new",
+        req.body.date_of_birth ?? null,
+        normalizePatientStatus(req.body.status, "new"),
         req.body.location ?? null,
         req.body.intake_date ?? null,
         req.body.last_visit_date ?? null,
@@ -229,13 +325,14 @@ patientsRouter.post("/api/patients/bulk-upsert", requireAuth, requireAnyRole("Ad
       for (const record of records) {
         await client.query(
           `insert into public.patients (
-              id, full_name, mrn, external_id, status, location, intake_date, last_visit_date, next_appt_date,
+              id, full_name, mrn, external_id, date_of_birth, status, location, intake_date, last_visit_date, next_appt_date,
               primary_program, counselor_name, flags, created_at, updated_at
-            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, coalesce($13, timezone('utc', now())), coalesce($14, timezone('utc', now())))
+            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, coalesce($14, timezone('utc', now())), coalesce($15, timezone('utc', now())))
             on conflict (id) do update
               set full_name = excluded.full_name,
                   mrn = excluded.mrn,
                   external_id = excluded.external_id,
+                  date_of_birth = excluded.date_of_birth,
                   status = excluded.status,
                   location = excluded.location,
                   intake_date = excluded.intake_date,
@@ -250,7 +347,8 @@ patientsRouter.post("/api/patients/bulk-upsert", requireAuth, requireAnyRole("Ad
             record.full_name ?? null,
             record.mrn ?? null,
             record.external_id ?? null,
-            record.status ?? "new",
+            record.date_of_birth ?? null,
+            normalizePatientStatus(record.status, "new"),
             record.location ?? null,
             record.intake_date ?? null,
             record.last_visit_date ?? null,
@@ -278,24 +376,26 @@ patientsRouter.patch("/api/patients/:id", requireAuth, requireAnyRole("Admin", "
           set full_name = coalesce($2, full_name),
               mrn = coalesce($3, mrn),
               external_id = coalesce($4, external_id),
-              status = coalesce($5, status),
-              location = coalesce($6, location),
-              intake_date = coalesce($7, intake_date),
-              last_visit_date = coalesce($8, last_visit_date),
-              next_appt_date = coalesce($9, next_appt_date),
-              primary_program = coalesce($10, primary_program),
-              counselor_name = coalesce($11, counselor_name),
-              flags = coalesce($12, flags),
+              date_of_birth = coalesce($5, date_of_birth),
+              status = coalesce($6, status),
+              location = coalesce($7, location),
+              intake_date = coalesce($8, intake_date),
+              last_visit_date = coalesce($9, last_visit_date),
+              next_appt_date = coalesce($10, next_appt_date),
+              primary_program = coalesce($11, primary_program),
+              counselor_name = coalesce($12, counselor_name),
+              flags = coalesce($13, flags),
               updated_at = timezone('utc', now())
         where id = $1
-        returning id, full_name, mrn, external_id, status, location, intake_date, last_visit_date, next_appt_date,
+        returning id, full_name, mrn, external_id, date_of_birth, status, location, intake_date, last_visit_date, next_appt_date,
                   primary_program, counselor_name, flags, created_at, updated_at`,
       [
         req.params.id,
         req.body.full_name,
         req.body.mrn,
         req.body.external_id,
-        req.body.status,
+        req.body.date_of_birth,
+        req.body.status == null ? null : normalizePatientStatus(req.body.status),
         req.body.location,
         req.body.intake_date,
         req.body.last_visit_date,
@@ -309,6 +409,15 @@ patientsRouter.patch("/api/patients/:id", requireAuth, requireAnyRole("Admin", "
     if (!rows[0]) {
       return res.status(404).json({ ok: false, error: "Patient not found" });
     }
+
+    await patchLatestIntakeJsonFromPatient(rows[0].id, {
+      fullName: rows[0].full_name,
+      dob: rows[0].date_of_birth,
+      location: rows[0].location,
+      status: rows[0].status,
+      primaryProgram: rows[0].primary_program,
+      counselorName: rows[0].counselor_name,
+    });
 
     res.json({ ok: true, patient: rows[0] });
   } catch (error) {
@@ -452,6 +561,18 @@ patientsRouter.post("/api/patients/:id/roster-details", requireAuth, requireAnyR
         req.body.updated_by ?? getRequestUser(req)?.id ?? null,
       ]
     );
+    if (rows[0]) {
+      await patchLatestIntakeJsonFromPatient(String(req.params.id), {
+        substances: rows[0].drug_of_choice ?? null,
+        medicalPhysApt: rows[0].medical_phys_apt ?? null,
+        medFormStatus: rows[0].med_form_status ?? null,
+        notes: rows[0].notes ?? null,
+        referringAgency: rows[0].referring_agency ?? null,
+        medicalEligibility: rows[0].medical_eligibility ?? null,
+        matStatus: rows[0].mat_status ?? null,
+        therapyTrack: rows[0].therapy_track ?? null,
+      });
+    }
     res.json({ ok: true, rosterDetails: rows[0] ?? null });
   } catch (error) {
     next(error);

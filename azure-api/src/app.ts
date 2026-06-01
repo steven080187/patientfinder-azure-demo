@@ -21,9 +21,43 @@ export function createApp() {
   const allowedOrigins = env.AZURE_API_ALLOWED_ORIGINS.split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const allowAnyLocalDevOrigin = process.env.NODE_ENV !== "production";
+
+  function isAllowedOrigin(origin: string) {
+    if (allowedOrigins.includes(origin)) {
+      return true;
+    }
+    if (!allowAnyLocalDevOrigin) {
+      return false;
+    }
+    try {
+      const parsed = new URL(origin);
+      const isCloudflareQuickTunnel = parsed.hostname.endsWith(".trycloudflare.com");
+      const isNgrokTunnel = parsed.hostname.endsWith(".ngrok-free.dev");
+      const isTailscaleMagicDns = parsed.hostname.endsWith(".ts.net");
+      const isPrivateLanIpv4 =
+        /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(parsed.hostname) ||
+        /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(parsed.hostname) ||
+        /^192\.168\.\d{1,3}\.\d{1,3}$/.test(parsed.hostname) ||
+        /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(parsed.hostname);
+      return (
+        (parsed.hostname === "localhost" ||
+          parsed.hostname === "127.0.0.1" ||
+          isPrivateLanIpv4 ||
+          isCloudflareQuickTunnel ||
+          isNgrokTunnel ||
+          isTailscaleMagicDns) &&
+        (parsed.protocol === "http:" || parsed.protocol === "https:")
+      );
+    } catch {
+      return false;
+    }
+  }
+
   console.info("[patient-flow][api][config]", {
     port: env.PORT,
     allowedOrigins,
+    allowAnyLocalDevOrigin,
     entraAuthEnabled: Boolean(env.ENTRA_TENANT_ID && (env.ENTRA_API_AUDIENCES || env.ENTRA_API_CLIENT_ID)),
     dataSource: "postgresql",
     hasDatabaseUrl: Boolean(env.DATABASE_URL),
@@ -33,7 +67,7 @@ export function createApp() {
   app.use(
     cors({
       origin(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
+        if (!origin || isAllowedOrigin(origin)) {
           callback(null, true);
           return;
         }

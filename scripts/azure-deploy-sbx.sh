@@ -25,9 +25,12 @@ mkdir -p "$FRONT_STAGE" "$API_STAGE"
 # Frontend package (repo root app)
 rsync -a "$ROOT"/ "$FRONT_STAGE"/ \
   --exclude .git \
+  --exclude .env \
+  --exclude '.env.*' \
   --exclude node_modules \
   --exclude .DS_Store \
   --exclude .vercel \
+  --exclude tmp \
   --exclude patientfinder-mobile \
   --exclude azure-api/node_modules \
   --exclude azure-api/dist \
@@ -36,8 +39,9 @@ rsync -a "$ROOT"/ "$FRONT_STAGE"/ \
 # API package (azure-api app only)
 rsync -a "$ROOT"/azure-api/ "$API_STAGE"/ \
   --exclude .git \
+  --exclude .env \
+  --exclude '.env.*' \
   --exclude node_modules \
-  --exclude .env.local \
   --exclude uploads
 
 (cd "$FRONT_STAGE" && zip -qr "$FRONT_ZIP" .)
