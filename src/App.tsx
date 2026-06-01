@@ -1484,6 +1484,9 @@ const THEME_COLORS: Record<ThemeId, string> = {
 const API_OVERRIDE_KEY = "patientfinder.azure-demo.apiBaseUrlOverride.v1";
 const LOCAL_API_BASE_URL = String(import.meta.env.VITE_LOCAL_AZURE_API_BASE_URL ?? "http://localhost:3001").trim();
 const NCADD_API_BASE_URL = String(import.meta.env.VITE_NCADD_AZURE_API_BASE_URL ?? "https://pfsbx-api-0412346.azurewebsites.net").trim();
+const IS_LOCAL_BROWSER =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
 /* -------------------- App -------------------- */
 
@@ -1594,12 +1597,11 @@ export default function App() {
       } catch (error) {
         const hasOverride = typeof window !== "undefined" && Boolean(window.localStorage.getItem(API_OVERRIDE_KEY));
         if (hasOverride && typeof window !== "undefined") {
-          // Auto-fallback to Local Dev when an override target is unreachable.
-          window.localStorage.setItem(API_OVERRIDE_KEY, LOCAL_API_BASE_URL);
+          window.localStorage.removeItem(API_OVERRIDE_KEY);
           try {
             const payload = await getAzureAuthOptions();
             if (cancelled) return;
-            setAuthOptionsError("Selected API target was unreachable. Switched to Local Dev.");
+            setAuthOptionsError("Selected API target was unreachable. Switched to the configured Azure API.");
             setAuthMode(payload.authMode ?? "demo");
             setAzureDemoUsers(payload.authMode === "demo" ? (payload.demoUsers ?? []) : []);
             return;
@@ -9322,6 +9324,7 @@ function EntraLoginScreen({
 function AuthRosterSourcePicker() {
   const [source, setSource] = useState<"ncadd" | "demo">(() => {
     if (typeof window === "undefined") return "demo";
+    if (!IS_LOCAL_BROWSER) return "ncadd";
     const override = window.localStorage.getItem(API_OVERRIDE_KEY)?.trim();
     if (!override) return "demo";
     if (override === NCADD_API_BASE_URL) return "ncadd";
@@ -9332,6 +9335,10 @@ function AuthRosterSourcePicker() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!IS_LOCAL_BROWSER) {
+      window.localStorage.removeItem(API_OVERRIDE_KEY);
+      return;
+    }
     const nextBaseUrl = source === "ncadd" ? NCADD_API_BASE_URL : LOCAL_API_BASE_URL;
     window.localStorage.setItem(API_OVERRIDE_KEY, nextBaseUrl);
   }, [source]);
@@ -9367,17 +9374,19 @@ function AuthRosterSourcePicker() {
           </button>
           {open ? (
             <div className="authRosterDropdown" role="menu">
-              <button
-                type="button"
-                className={source === "demo" ? "authRosterOption active" : "authRosterOption"}
-                onClick={() => {
-                  setSource("demo");
-                  setOpen(false);
-                }}
-              >
-                <img className="authRosterOptionLogo demo" src={themeButtonLogo} alt="" aria-hidden="true" />
-                <span>Local Dev</span>
-              </button>
+              {IS_LOCAL_BROWSER ? (
+                <button
+                  type="button"
+                  className={source === "demo" ? "authRosterOption active" : "authRosterOption"}
+                  onClick={() => {
+                    setSource("demo");
+                    setOpen(false);
+                  }}
+                >
+                  <img className="authRosterOptionLogo demo" src={themeButtonLogo} alt="" aria-hidden="true" />
+                  <span>Local Dev</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={source === "ncadd" ? "authRosterOption active" : "authRosterOption"}

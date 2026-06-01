@@ -34,7 +34,12 @@ function getApiBaseUrl() {
   const overrideKey = "patientfinder.azure-demo.apiBaseUrlOverride.v1";
   const rawOverrideBaseUrl =
     typeof window !== "undefined" ? window.localStorage.getItem(overrideKey)?.trim() : null;
-  const isAllowedOverride = (value: string) => /^https?:\/\//i.test(value) || value.startsWith("/");
+  const isLocalBrowser =
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+  const isAllowedOverride = (value: string) =>
+    /^https:\/\//i.test(value) ||
+    (isLocalBrowser && (/^http:\/\//i.test(value) || value.startsWith("/")));
   const overrideBaseUrl =
     rawOverrideBaseUrl && isAllowedOverride(rawOverrideBaseUrl) ? rawOverrideBaseUrl : null;
   const apiBaseUrl = overrideBaseUrl || configuredBaseUrl;
