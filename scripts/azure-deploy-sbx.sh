@@ -44,6 +44,8 @@ rsync -a "$ROOT"/azure-api/ "$API_STAGE"/ \
   --exclude node_modules \
   --exclude uploads
 
+(cd "$API_STAGE" && npm ci --omit=dev)
+
 (cd "$FRONT_STAGE" && zip -qr "$FRONT_ZIP" .)
 (cd "$API_STAGE" && zip -qr "$API_ZIP" .)
 
@@ -54,14 +56,16 @@ az webapp deploy \
   --resource-group "$RESOURCE_GROUP" \
   --name "$FRONT_APP" \
   --src-path "$FRONT_ZIP" \
-  --type zip
+  --type zip \
+  --track-status false
 
 echo "Deploying API to $API_APP..."
 az webapp deploy \
   --resource-group "$RESOURCE_GROUP" \
   --name "$API_APP" \
   --src-path "$API_ZIP" \
-  --type zip
+  --type zip \
+  --track-status false
 
 echo "Done."
 echo "Frontend: https://${FRONT_APP}.azurewebsites.net"

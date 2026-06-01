@@ -3,7 +3,6 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
-import { PDFParse } from "pdf-parse";
 import { z } from "zod";
 import { auditLog, getRequestId, hipaaHash } from "../audit.js";
 import { deleteBlobIfExists, downloadBlobStream, downloadBlobToBuffer, uploadPatientDocumentPdf } from "../blobStorage.js";
@@ -566,6 +565,13 @@ async function readVaultTextDocuments(rows: PatientDocumentRow[]) {
 }
 
 async function readPdfDocuments(rows: PatientDocumentRow[], label: "vault" | "patient") {
+  let PDFParse: typeof import("pdf-parse").PDFParse;
+  try {
+    ({ PDFParse } = await import("pdf-parse"));
+  } catch {
+    return [];
+  }
+
   const pdfRows = prioritizeRows(
     rows.filter(
       (row) =>
