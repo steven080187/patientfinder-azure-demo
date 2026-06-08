@@ -63,7 +63,7 @@ notificationsRouter.patch("/api/notifications/:notificationId/read", requireAuth
       return;
     }
 
-    const rows = await withTransaction(async (client) => {
+    const updated = await withTransaction(async (client) => {
       const visibleResult = user?.roles.includes("Admin")
         ? await client.query<{
             id: string;
@@ -108,7 +108,7 @@ notificationsRouter.patch("/api/notifications/:notificationId/read", requireAuth
             [notificationId, user?.email ?? "", user?.id ?? ""]
           );
       const target = visibleResult.rows[0];
-      if (!target) return [];
+      if (!target) return false;
 
       const updated = await client.query(
         `update public.in_app_notifications
@@ -144,10 +144,10 @@ notificationsRouter.patch("/api/notifications/:notificationId/read", requireAuth
         }
       }
 
-      return updated;
+      return Boolean(updated.rowCount);
     });
 
-    if (!rows.length) {
+    if (!updated) {
       res.status(404).json({ ok: false, error: "Notification not found." });
       return;
     }

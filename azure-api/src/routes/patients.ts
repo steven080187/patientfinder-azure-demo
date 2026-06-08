@@ -269,7 +269,8 @@ patientsRouter.patch("/api/patients/:id", requireAuth, requireAnyRole("Admin", "
     );
     const previousPrimaryProgram = existingRows[0]?.primary_program ?? null;
     const nextPrimaryProgram = req.body.primary_program ?? null;
-    const patient = await upsertPatientCore({ query }, req.params.id, {
+    const patientId = String(req.params.id);
+    const patient = await upsertPatientCore({ query }, patientId, {
       full_name: req.body.full_name ?? null,
       mrn: req.body.mrn ?? null,
       external_id: req.body.external_id ?? null,
@@ -315,7 +316,7 @@ patientsRouter.patch("/api/patients/:id", requireAuth, requireAnyRole("Admin", "
 
 patientsRouter.delete("/api/patients/:id", requireAuth, requireAnyRole("Admin"), async (req, res, next) => {
   try {
-    const rows = [await deletePatientById({ query }, req.params.id)];
+    const rows = [await deletePatientById({ query }, String(req.params.id))];
 
     if (!rows[0]) {
       return res.status(404).json({ ok: false, error: "Patient not found" });
@@ -366,7 +367,7 @@ patientsRouter.post("/api/patients/:id/case-assignment", requireAuth, requireAny
 
 patientsRouter.delete("/api/patients/:id/case-assignment", requireAuth, requireAnyRole("Admin", "Intake"), async (req, res, next) => {
   try {
-    await query(`delete from public.patient_case_assignments where patient_id = $1`, [req.params.id]);
+      await query(`delete from public.patient_case_assignments where patient_id = $1`, [String(req.params.id)]);
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -375,7 +376,7 @@ patientsRouter.delete("/api/patients/:id/case-assignment", requireAuth, requireA
 
 patientsRouter.post("/api/patients/:id/compliance", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
   try {
-    const compliance = await upsertPatientCompliance({ query }, req.params.id, {
+    const compliance = await upsertPatientCompliance({ query }, String(req.params.id), {
       drug_test_mode: req.body.drug_test_mode ?? "none",
       drug_tests_per_week: req.body.drug_tests_per_week ?? null,
       drug_test_weekday: req.body.drug_test_weekday ?? null,

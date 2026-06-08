@@ -967,7 +967,7 @@ function buildHighlightMap(notes: InAppNotification[]) {
 
 type HighlightThread = {
   threadId: string;
-  patientId?: string;
+  patientId: string | undefined;
   patientName: string;
   latest: InAppNotification;
   messages: InAppNotification[];
@@ -990,7 +990,7 @@ function buildHighlightThreads(
     grouped.get(threadId)!.push(note);
   });
 
-  const threads = [...grouped.entries()].map(([threadId, items]) => {
+  const threads: Array<HighlightThread | null> = [...grouped.entries()].map(([threadId, items]) => {
     const ordered = [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const latest = ordered[ordered.length - 1];
     const related = ordered.filter((note) => {
@@ -1295,34 +1295,6 @@ function getNextUpSummary(patient: Patient, compliance: PatientCompliance | unde
   return { label: `${next.label} ${fmt(next.dueDate)}`, tone };
 }
 
-function getSheetRowData(patient: Patient, compliance: PatientCompliance | undefined) {
-  const treatmentPlanDueDates = getTreatmentPlanDueDates(patient, compliance);
-  const roster = patient.rosterDetails ?? {};
-  const programSummary = formatProgramBadge(patient.primaryProgram);
-  const docSummary = formatSpreadsheetDrugChoices(roster.drugOfChoice);
-  const programDocBubble = `${programSummary} • ${docSummary}`;
-  const lastPlReview = getLastProblemListReviewLabel(compliance, patient);
-  const daysInTreatment = `${Math.max(0, dayDiff(patient.intakeDate, todayIso()))} days`;
-  return {
-    clientName: patient.displayName,
-    sageId: patient.mrn ?? "—",
-    programDocBubble,
-    admitDate: fmt(patient.intakeDate),
-    problemListInitial: compliance?.problemListDate ? fmt(compliance.problemListDate) : "—",
-    lastPlReview,
-    daysInTreatment,
-    treatmentPlanInitial: treatmentPlanDueDates?.initial ? fmt(treatmentPlanDueDates.initial) : "—",
-    medicalPhysApt: roster.medicalPhysApt ?? "—",
-    medForm: roster.medFormStatus ?? "—",
-    referringAgency: roster.referringAgency ?? "—",
-    reauthSapcDate: roster.reauthSapcDate ? fmt(roster.reauthSapcDate) : "—",
-    medicalEligibility: roster.medicalEligibility ?? "—",
-    matStatus: roster.matStatus ?? "—",
-    therapyTrack: roster.therapyTrack ?? "—",
-    notes: roster.notes ?? "",
-  };
-}
-
 function getProblemListDueDates(compliance: PatientCompliance | undefined, patient?: Patient) {
   if (patient && patient.kind === "Former Patient") return null;
   if (!compliance?.problemListDate) return null;
@@ -1330,24 +1302,6 @@ function getProblemListDueDates(compliance: PatientCompliance | undefined, patie
   return {
     nextReview: nextMilestone?.label === "PL Review" ? nextMilestone.dueDate : null,
     nextUpdate: addDaysIso(compliance.problemListDate, 90),
-  };
-}
-
-function getTreatmentPlanDueDates(patient: Patient, compliance: PatientCompliance | undefined) {
-  const config = compliance ?? {};
-  const cycleDays = config.treatmentPlanCycleDays ?? 90;
-  const initial = config.treatmentPlanDate ?? addDaysIso(patient.intakeDate, 30);
-  if (isTreatmentPlanEnded(patient)) {
-    return {
-      initial,
-      nextUpdate: undefined as string | undefined,
-      ended: true,
-    };
-  }
-  return {
-    initial,
-    nextUpdate: addDaysIso(config.lastTreatmentPlanUpdate ?? initial, cycleDays),
-    ended: false,
   };
 }
 
@@ -3249,11 +3203,6 @@ export default function App() {
     window.addEventListener("beforeunload", clearCache);
     return () => window.removeEventListener("beforeunload", clearCache);
   }, []);
-
-  const refreshPatients = async () => {
-    await loadDashboardData();
-    await loadPatientDirectory();
-  };
 
   useEffect(() => {
     if (route.name !== "patient") {

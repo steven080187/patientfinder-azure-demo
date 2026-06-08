@@ -126,8 +126,10 @@ intakeRouter.post("/api/intake-submissions", requireAuth, requireAnyRole("Admin"
 
     if (rows[0]) {
       await bootstrapVaultForSubmission(rows[0]);
-      await seedPatientRosterDrugOfChoiceFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
-      await seedPatientPrimaryProgramFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
+      if (rows[0].patient_id) {
+        await seedPatientRosterDrugOfChoiceFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
+        await seedPatientPrimaryProgramFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
+      }
     }
 
     res.status(201).json({ ok: true, intakeSubmission: rows[0] });
@@ -185,8 +187,10 @@ intakeRouter.patch("/api/intake-submissions/:id", requireAuth, requireAnyRole("A
       return res.status(404).json({ ok: false, error: "Intake submission not found" });
     }
 
-    await seedPatientRosterDrugOfChoiceFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
-    await seedPatientPrimaryProgramFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
+    if (rows[0].patient_id) {
+      await seedPatientRosterDrugOfChoiceFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
+      await seedPatientPrimaryProgramFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
+    }
     res.json({ ok: true, intakeSubmission: rows[0] });
   } catch (error) {
     next(error);

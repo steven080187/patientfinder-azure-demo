@@ -1,7 +1,9 @@
-import type { PoolClient } from "pg";
+import type { QueryResultRow } from "pg";
 import type { PatientComplianceRow, PatientRosterDetailsRow, PatientRow } from "./types.js";
 
-export type QueryRunner = Pick<PoolClient, "query">;
+export type QueryRunner = {
+  query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<T[]>;
+};
 
 function getRows<T>(result: unknown): T[] {
   if (Array.isArray(result)) return result as T[];
