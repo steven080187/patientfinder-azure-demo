@@ -3,6 +3,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { query } from "../db.js";
 import { requireAnyRole, requireAuth } from "../entraAuth.js";
 import type { IntakeSubmissionRow } from "../types.js";
+import {
+  seedPatientPrimaryProgramFromRawJson,
+  seedPatientRosterDrugOfChoiceFromRawJson,
+  upsertPatientCore,
+} from "../patientWrites.js";
 import { writeVaultArtifact } from "../vaultStorage.js";
 
 export const intakeRouter = Router();
@@ -85,31 +90,15 @@ intakeRouter.post("/api/intake-submissions", requireAuth, requireAnyRole("Admin"
     const intakeSubmissionId = req.body.id || randomUUID();
     const submissionId = req.body.submission_id || randomUUID();
 
-    await query(
-      `insert into public.patients (
-          id, full_name, date_of_birth, status, location, intake_date, flags
-        ) values ($1,$2,$3,$4,$5,$6,$7)
-        on conflict (id) do update
-          set full_name = coalesce(excluded.full_name, public.patients.full_name),
-              date_of_birth = coalesce(excluded.date_of_birth, public.patients.date_of_birth),
-              status = coalesce(excluded.status, public.patients.status),
-              location = coalesce(excluded.location, public.patients.location),
-              intake_date = coalesce(excluded.intake_date, public.patients.intake_date),
-              flags = case
-                when cardinality(excluded.flags) > 0 then excluded.flags
-                else public.patients.flags
-              end,
-              updated_at = timezone('utc', now())`,
-      [
-        patientId,
-        req.body.submitted_full_name ?? null,
-        req.body.submitted_dob ?? null,
-        "new",
-        req.body.submitted_location ?? null,
-        req.body.intake_date ?? null,
-        [],
-      ]
-    );
+    await upsertPatientCore({ query }, patientId, {
+      full_name: req.body.submitted_full_name ?? null,
+      date_of_birth: req.body.submitted_dob ?? null,
+      status: "new",
+      location: req.body.submitted_location ?? null,
+      intake_date: req.body.intake_date ?? null,
+      primary_program: req.body.primary_program ?? null,
+      flags: [],
+    });
 
     const rows = await query<IntakeSubmissionRow>(
       `insert into public.intake_submissions (
@@ -137,6 +126,8 @@ intakeRouter.post("/api/intake-submissions", requireAuth, requireAnyRole("Admin"
 
     if (rows[0]) {
       await bootstrapVaultForSubmission(rows[0]);
+      await seedPatientRosterDrugOfChoiceFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
+      await seedPatientPrimaryProgramFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
     }
 
     res.status(201).json({ ok: true, intakeSubmission: rows[0] });
@@ -194,6 +185,8 @@ intakeRouter.patch("/api/intake-submissions/:id", requireAuth, requireAnyRole("A
       return res.status(404).json({ ok: false, error: "Intake submission not found" });
     }
 
+    await seedPatientRosterDrugOfChoiceFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
+    await seedPatientPrimaryProgramFromRawJson({ query }, rows[0].patient_id, rows[0].raw_json);
     res.json({ ok: true, intakeSubmission: rows[0] });
   } catch (error) {
     next(error);

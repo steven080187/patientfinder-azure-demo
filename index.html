@@ -12,9 +12,46 @@
     <meta name="apple-mobile-web-app-title" content="patientfinder" />
     <title>patientfinder</title>
     <script>(function(){var t=localStorage.getItem("pf_theme")||"cosmos";if(t==="forest")t="mulberry";if(t==="aurora")t="dune";document.documentElement.setAttribute("data-theme",t);})();</script>
+    <script>
+      (function () {
+        const proto = window.ReadableStream && ReadableStream.prototype;
+        if (!proto) return;
+        if (!proto[Symbol.asyncIterator]) {
+          proto[Symbol.asyncIterator] = function () {
+            const reader = this.getReader();
+            return {
+              async next() {
+                const result = await reader.read();
+                if (result.done) {
+                  try {
+                    reader.releaseLock();
+                  } catch {}
+                }
+                return result;
+              },
+              async return() {
+                try {
+                  reader.releaseLock();
+                } catch {}
+                return { done: true, value: undefined };
+              },
+              [Symbol.asyncIterator]() {
+                return this;
+              },
+            };
+          };
+        }
+        if (!proto.values) {
+          proto.values = function () {
+            return this[Symbol.asyncIterator]();
+          };
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <div id="portal" style="position: fixed; left: 0; top: 0; z-index: 9999;"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

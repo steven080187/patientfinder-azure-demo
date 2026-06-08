@@ -18,6 +18,11 @@ begin
 end
 $$;
 
+alter type public.patient_status add value if not exists 'current';
+alter type public.patient_status add value if not exists 'rss_plus';
+alter type public.patient_status add value if not exists 'rss';
+alter type public.patient_status add value if not exists 'former';
+
 create table if not exists public.patients (
   id uuid primary key,
   full_name text,
@@ -128,6 +133,8 @@ create table if not exists public.patient_roster_details (
 
 create table if not exists public.in_app_notifications (
   id uuid primary key,
+  thread_id uuid not null,
+  parent_notification_id uuid,
   recipient_user_id uuid,
   recipient_email text,
   sender_user_id uuid,
@@ -144,6 +151,7 @@ create table if not exists public.in_app_notifications (
 create index if not exists in_app_notifications_created_at_idx on public.in_app_notifications(created_at desc);
 create index if not exists in_app_notifications_recipient_email_idx on public.in_app_notifications(recipient_email);
 create index if not exists in_app_notifications_recipient_user_id_idx on public.in_app_notifications(recipient_user_id);
+create index if not exists in_app_notifications_thread_id_idx on public.in_app_notifications(thread_id);
 
 create table if not exists public.group_signin_sessions (
   id uuid primary key,
@@ -265,4 +273,117 @@ create index if not exists patient_documents_storage_blob_path_idx
 drop trigger if exists patient_documents_set_updated_at on public.patient_documents;
 create trigger patient_documents_set_updated_at
 before update on public.patient_documents
+for each row execute function public.set_updated_at();
+
+create table if not exists public.patient_bridge_workbooks (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  original_file_name text not null,
+  storage_mode text not null default 'demo',
+  graph_site_id text,
+  graph_drive_id text,
+  graph_item_id text,
+  graph_path text,
+  graph_web_url text,
+  graph_embed_url text,
+  file_size_bytes bigint,
+  uploaded_by_email text,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists patient_bridge_workbooks_created_at_idx
+  on public.patient_bridge_workbooks(created_at desc);
+
+create table if not exists public.patient_bridge_workbook_audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  workbook_id uuid references public.patient_bridge_workbooks(id) on delete cascade,
+  action text not null,
+  summary text not null,
+  details jsonb not null default '{}'::jsonb,
+  actor_email text,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists patient_bridge_workbook_audit_logs_workbook_id_created_at_idx
+  on public.patient_bridge_workbook_audit_logs(workbook_id, created_at desc);
+
+drop trigger if exists patient_bridge_workbooks_set_updated_at on public.patient_bridge_workbooks;
+create trigger patient_bridge_workbooks_set_updated_at
+before update on public.patient_bridge_workbooks
+for each row execute function public.set_updated_at();
+
+create table if not exists public.admin_workbooks (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  original_file_name text not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.admin_sheets (
+  id uuid primary key default gen_random_uuid(),
+  workbook_id uuid references public.admin_workbooks(id) on delete cascade,
+  name text not null,
+  tab_name text not null default 'Sheet1',
+  original_file_name text not null,
+  source_sheet_name text,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+alter table if exists public.admin_sheets
+  add column if not exists workbook_id uuid references public.admin_workbooks(id) on delete cascade;
+
+alter table if exists public.admin_sheets
+  add column if not exists tab_name text not null default 'Sheet1';
+
+create index if not exists admin_sheets_workbook_id_idx
+  on public.admin_sheets(workbook_id);
+
+create table if not exists public.admin_sheet_columns (
+  id uuid primary key default gen_random_uuid(),
+  sheet_id uuid not null references public.admin_sheets(id) on delete cascade,
+  column_name text not null,
+  mapped_patient_field text,
+  column_type text,
+  sort_order integer not null
+);
+
+create index if not exists admin_sheet_columns_sheet_id_sort_order_idx
+  on public.admin_sheet_columns(sheet_id, sort_order);
+
+create table if not exists public.admin_sheet_rows (
+  id uuid primary key default gen_random_uuid(),
+  sheet_id uuid not null references public.admin_sheets(id) on delete cascade,
+  linked_patient_id uuid references public.patients(id) on delete set null,
+  row_order integer not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists admin_sheet_rows_sheet_id_row_order_idx
+  on public.admin_sheet_rows(sheet_id, row_order);
+
+create index if not exists admin_sheet_rows_linked_patient_id_idx
+  on public.admin_sheet_rows(linked_patient_id);
+
+create table if not exists public.admin_sheet_cell_values (
+  id uuid primary key default gen_random_uuid(),
+  row_id uuid not null references public.admin_sheet_rows(id) on delete cascade,
+  column_id uuid not null references public.admin_sheet_columns(id) on delete cascade,
+  value text
+);
+
+create unique index if not exists admin_sheet_cell_values_row_column_idx
+  on public.admin_sheet_cell_values(row_id, column_id);
+
+drop trigger if exists admin_sheets_set_updated_at on public.admin_sheets;
+create trigger admin_sheets_set_updated_at
+before update on public.admin_sheets
+for each row execute function public.set_updated_at();
+
+drop trigger if exists admin_sheet_rows_set_updated_at on public.admin_sheet_rows;
+create trigger admin_sheet_rows_set_updated_at
+before update on public.admin_sheet_rows
 for each row execute function public.set_updated_at();

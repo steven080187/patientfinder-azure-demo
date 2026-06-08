@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { getRequestUser, requireAnyRole, requireAuth } from "../entraAuth.js";
+import { loadPatientAggregates } from "../patientAggregate.js";
+import { backfillRosterDrugOfChoiceFromLatestIntake } from "../rosterSync.js";
 
 export const dashboardRouter = Router();
 const DASHBOARD_CACHE_TTL_MS = Number.parseInt(process.env.DASHBOARD_CACHE_TTL_MS ?? "30000", 10) || 30_000;
@@ -9,6 +11,7 @@ type DashboardPayload = {
   ok: true;
   dashboard: {
     patients: unknown[];
+    patientAggregates: unknown[];
     assignments: unknown[];
     compliance: unknown[];
     drugTests: unknown[];
@@ -81,6 +84,7 @@ async function queryOptionalDashboardTable(sql: string, tableName: string, param
 
 dashboardRouter.get("/api/dashboard", requireAuth, requireAnyRole("Admin", "Counselor", "Intake"), async (req, res, next) => {
   try {
+    await backfillRosterDrugOfChoiceFromLatestIntake();
     const user = getRequestUser(req);
     const canSeeAllNotifications = Boolean(user?.roles.includes("Admin"));
     const includePatients = String(req.query.include_patients ?? "1") !== "0";
@@ -110,31 +114,33 @@ dashboardRouter.get("/api/dashboard", requireAuth, requireAnyRole("Admin", "Coun
         );
 
     const [
-      patients,
+      patientAggregatePayload,
       assignments,
-      compliance,
-      drugTests,
       sessions,
       attendanceSessionPatients,
-      rosterDetails,
       notifications,
       billingEntries,
     ] = await Promise.all([
-      includePatients ? query(`select * from public.patients order by full_name asc nulls last`) : Promise.resolve([]),
+      loadPatientAggregates(includePatients),
       queryOptionalDashboardTable(`select * from public.patient_case_assignments`, "patient_case_assignments"),
-      queryOptionalDashboardTable(`select * from public.patient_compliance`, "patient_compliance"),
-      queryOptionalDashboardTable(`select * from public.patient_drug_tests order by date desc`, "patient_drug_tests"),
       queryOptionalDashboardTable(`select * from public.attendance_sessions order by date desc, created_at desc`, "attendance_sessions"),
       queryOptionalDashboardTable(`select * from public.attendance_session_patients`, "attendance_session_patients"),
-      queryOptionalDashboardTable(`select * from public.patient_roster_details`, "patient_roster_details"),
       notificationsPromise,
       queryOptionalDashboardTable(`select * from public.patient_billing_entries order by service_date desc, created_at desc`, "patient_billing_entries"),
     ]);
+    const {
+      aggregates: patientAggregates,
+      patients,
+      complianceRows: compliance,
+      drugTestRows: drugTests,
+      rosterRows: rosterDetails,
+    } = patientAggregatePayload;
 
     const payload: DashboardPayload = {
       ok: true,
       dashboard: {
         patients,
+        patientAggregates,
         assignments,
         compliance,
         drugTests,

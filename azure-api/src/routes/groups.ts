@@ -403,8 +403,14 @@ function getPublicGroupOrigin(req: Request) {
     return allowedOrigins[0].replace(/\/+$/, "");
   }
 
-  const protocol = req.headers["x-forwarded-proto"] ? String(req.headers["x-forwarded-proto"]) : req.protocol;
-  const host = req.get("host");
+  const forwardedProtoHeader = req.headers["x-forwarded-proto"];
+  const forwardedHostHeader = req.headers["x-forwarded-host"];
+  const protocol = typeof forwardedProtoHeader === "string" && forwardedProtoHeader.trim()
+    ? forwardedProtoHeader.split(",")[0].trim()
+    : req.protocol;
+  const host = typeof forwardedHostHeader === "string" && forwardedHostHeader.trim()
+    ? forwardedHostHeader.split(",")[0].trim()
+    : req.get("host");
   return host ? `${protocol}://${host}` : "";
 }
 
@@ -634,7 +640,7 @@ groupsRouter.post("/api/groups/live/start", requireAuth, requireAnyRole("Admin",
 
     const token = createGroupJoinToken(sessionId);
     const origin = getPublicGroupOrigin(req);
-    const joinUrl = `${origin}/group-sign/${encodeURIComponent(token)}`;
+    const joinUrl = `${origin}/g/${encodeURIComponent(token)}`;
     const session = await getSessionById(sessionId);
 
     res.json({

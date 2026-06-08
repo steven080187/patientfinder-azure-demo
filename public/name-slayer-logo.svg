@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Name Slayer</title>
+  <desc id="desc">A shield-style mark with a flame and slash motif.</desc>
+  <defs>
+    <linearGradient id="bg" x1="96" y1="64" x2="416" y2="448" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1B2D42" />
+      <stop offset="1" stop-color="#0C1522" />
+    </linearGradient>
+    <linearGradient id="accent" x1="160" y1="112" x2="352" y2="384" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6ED3FF" />
+      <stop offset="1" stop-color="#6BE6B6" />
+    </linearGradient>
+    <linearGradient id="flare" x1="176" y1="144" x2="336" y2="336" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.95" />
+      <stop offset="1" stop-color="#CFEFFF" stop-opacity="0.15" />
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="110" fill="url(#bg)" stroke="url(#accent)" stroke-width="14" />
+  <path d="M256 88L372 146V250C372 332 323 389 256 424C189 389 140 332 140 250V146L256 88Z" fill="#F5F9FF" fill-opacity="0.10" stroke="url(#accent)" stroke-width="10" />
+  <path d="M258 140C238 171 220 188 220 221C220 244 234 260 253 260C274 260 290 244 290 223C290 202 279 190 270 177C266 171 265 163 267 154C263 158 260 164 258 140Z" fill="url(#flare)" />
+  <path d="M255 160C239 181 226 196 226 220C226 244 239 257 256 257C273 257 286 244 286 225C286 206 277 193 268 181C266 177 264 171 264 165C260 169 258 173 255 160Z" fill="url(#accent)" />
+  <path d="M188 300C208 283 227 274 255 274C283 274 302 283 324 300C313 322 296 339 272 348C272 335 266 324 255 316C244 324 238 335 238 348C214 339 197 322 188 300Z" fill="url(#flare)" />
+  <path d="M172 272L256 186L340 272L256 358L172 272Z" fill="#FFFFFF" fill-opacity="0.08" stroke="url(#accent)" stroke-width="8" />
+  <path d="M195 286L317 164" stroke="#FFFFFF" stroke-opacity="0.92" stroke-width="16" stroke-linecap="round" />
+  <path d="M190 295L312 173" stroke="url(#accent)" stroke-width="8" stroke-linecap="round" />
+</svg>

@@ -14,7 +14,7 @@ import { getVaultAbsolutePathFromBlobPath, writeVaultArtifact } from "../vaultSt
 
 export const patientDocumentsRouter = Router();
 const VAULT_TYPE_PREFIX = "vault:";
-const VAULT_DOC_TYPES = new Set(["assessment", "problem_list", "problem_list_note", "treatment_plan", "medical_necessity_note", "discharge_note", "session", "intake", "snap"]);
+const VAULT_DOC_TYPES = new Set(["assessment", "asam_assessment", "problem_list", "problem_list_note", "treatment_plan", "medical_necessity_note", "discharge_note", "session", "intake", "snap"]);
 
 const uploadSchema = z.object({
   // Demo/sandbox datasets use deterministic IDs that are not RFC UUIDs.
@@ -94,7 +94,7 @@ const BUILT_IN_TEMPLATES: Record<z.infer<typeof aiGenerateSchema>["noteType"], s
     "Use all uploaded documents (especially assessment + recent sessions) before deciding a duration/frequency/last-use detail is unavailable.",
     "4) Functional impairments.",
     "5) Primary treatment goal over the next 90 days.",
-    "6) Initial treatment course: include level of care plus group/individual counseling frequency and coping-skills focus.",
+    "6) Initial treatment course: include program plus group/individual counseling frequency and coping-skills focus.",
     "Do not invent details. If unknown, use neutral language without saying 'Not documented'.",
     "Use MM/DD/YYYY for dates.",
     "Prefer concise phrasing similar to: 'Patient reported methamphetamine use for the last 5 years.' when supported by source data.",
@@ -169,7 +169,7 @@ const BUILT_IN_TEMPLATES: Record<z.infer<typeof aiGenerateSchema>["noteType"], s
   ].join("\n"),
   medical_necessity_note: [
     "Create a Medical Necessity Note for ongoing outpatient services.",
-    "Include level of care as either 1.0 or 2.1 based on available program data; if unclear write 'Not documented'.",
+    "Include program as either 1.0 or 2.1 based on available program data; if unclear write 'Not documented'.",
     "Use exact section headings:",
     "Dimension 1",
     "Dimension 2",
@@ -195,12 +195,19 @@ const BUILT_IN_TEMPLATES: Record<z.infer<typeof aiGenerateSchema>["noteType"], s
     "6) Recommendations for Follow Up",
     "7) Patient Comments",
     "Required details:",
-    "- Include admission date, discharge date, admitted level of care, and total calendar days completed.",
-    "- Include whether discharge/transfer was voluntary or involuntary and whether completion was successful for this level of care.",
-    "- Include SNAP (Strengths, Needs, Abilities, Preferences), prognosis, progress/gains, and functional recovery details.",
+    "- Use every available uploaded document, including assessment, SNAP/treatment plan, problem list, discharge note, sessions, and other vault/patient documents.",
+    "- Do not rely only on the newest document. Consider the full treatment trajectory from first document through most recent document.",
+    "- Section 1 must list each relapse trigger separately with a specific relapse prevention plan for that trigger. Use triggers from assessment, SNAP, problem list, treatment plan, session notes, and discharge documents.",
+    "- Include admission date, discharge date, admitted program, and total calendar days completed.",
+    "- Include whether discharge/transfer was voluntary or involuntary and whether completion was successful for this program.",
+    "- Section 3 must include SNAP in this exact structure when source data supports it: Strengths: ... Needs: ... Abilities: ... Preferences: ...",
+    "- Use SNAP from uploaded SNAP/treatment plan/intake/assessment content when present; do not omit SNAP if it appears anywhere in the documents.",
+    "- Include prognosis, progress/gains, and functional recovery details.",
+    "- Section 4 must include Dimension 1, Dimension 2, Dimension 3, Dimension 4, Dimension 5, and Dimension 6 with progress made in each dimension.",
     "- Always include vocational and educational achievements/next steps.",
     "- Include social support/sponsor/recovery meeting plan.",
-    "- If any required data is missing, write 'Not documented'.",
+    "- Include referrals/resources when available, including outpatient/RBH/sober living/recovery supports, community resources, employment resources, medical/MH follow-up, and recovery meeting resources.",
+    "- Do not invent facts, but do not write 'Not documented'. Work around missing details with neutral clinical phrasing.",
     "Patient Comments section must always appear; if unavailable state: 'Patient was not available for comment.'",
   ].join("\n"),
   discharge_note: [
@@ -215,7 +222,7 @@ const BUILT_IN_TEMPLATES: Record<z.infer<typeof aiGenerateSchema>["noteType"], s
     "7) Medications and Prescriber Information",
     "Requirements:",
     "- Presenting condition must include the core SUD problem(s) and resulting functional impairments.",
-    "- Justification must align with discharge/transfer form facts: admission/discharge dates, level of care, duration, completion/transfer status when available.",
+    "- Justification must align with discharge/transfer form facts: admission/discharge dates, program, duration, completion/transfer status when available.",
     "- Course of treatment should summarize groups, individual counseling, care coordination, and recovery supports.",
     "- Progress section must include Dimension 1 through Dimension 6 narrative updates.",
     "- Recommendations section should include follow-up services and recovery-support plan.",
@@ -438,7 +445,7 @@ const PATIENTFINDER_CLINICAL_STYLE_RULES = [
   "Format all dates in generated notes as MM/DD/YYYY.",
   "Write in a clear, concise, professional clinical tone with practical detail.",
   "Always add clinical substance: include what was addressed, why it matters clinically, what intervention was used, how intervention links to treatment goals, how patient responded, observed progress/barriers, and next steps.",
-  "Never fabricate diagnoses, quotes, toxicology results, attendance, medications, SI/HI status, legal details, dates, level of care, or completion status.",
+  "Never fabricate diagnoses, quotes, toxicology results, attendance, medications, SI/HI status, legal details, dates, program, or completion status.",
   "If information is missing, use neutral clinical language and work around the gap without fabrication. Do not use the phrase 'Not documented'.",
   "Use active clinical phrasing: Patient reported/identified/processed/explored; Counselor provided psychoeducation; Counselor used Motivational Interviewing; Counselor used CBT-based interventions.",
   "Use evidence-based practices when clinically appropriate: Motivational Interviewing, CBT, Relapse Prevention Therapy, Psychoeducation, Harm Reduction, Trauma-informed care, Solution-Focused Brief Therapy.",
@@ -466,6 +473,27 @@ const TREATMENT_PLAN_REQUIRED_HEADINGS = [
 function looksLikeStrictTreatmentPlan(note: string) {
   const upper = note.toUpperCase();
   return TREATMENT_PLAN_REQUIRED_HEADINGS.every((heading) => upper.includes(heading));
+}
+
+function looksLikeDischargeForm(note: string) {
+  const upper = note.toUpperCase();
+  return [
+    "DESCRIPTION OF EACH RELAPSE TRIGGER",
+    "JUSTIFICATION FOR TRANSFER OR DISCHARGE",
+    "NARRATIVE SUMMARY",
+    "DIMENSION 1",
+    "DIMENSION 2",
+    "DIMENSION 3",
+    "DIMENSION 4",
+    "DIMENSION 5",
+    "DIMENSION 6",
+    "STRENGTHS:",
+    "NEEDS:",
+    "ABILITIES:",
+    "PREFERENCES:",
+    "RECOMMENDATIONS FOR FOLLOW UP",
+    "PATIENT COMMENTS",
+  ].every((piece) => upper.includes(piece));
 }
 
 function normalizePdfFileName(fileName?: string) {
@@ -532,7 +560,7 @@ function toSortableEpoch(value: unknown) {
 
 function documentPriority(row: PatientDocumentRow) {
   const docType = row.document_type.replace(/^vault:/, "");
-  if (docType === "assessment") return 0;
+  if (docType === "assessment" || docType === "asam_assessment") return 0;
   if (docType === "problem_list") return 1;
   if (docType === "session") return 2;
   return 3;
@@ -550,7 +578,7 @@ function prioritizeRows(rows: PatientDocumentRow[]) {
 async function readVaultTextDocuments(rows: PatientDocumentRow[]) {
   const textDocs = prioritizeRows(rows.filter((row) => row.content_type.toLowerCase().includes("text/plain")));
   const blocks: string[] = [];
-  for (const row of textDocs.slice(0, 8)) {
+  for (const row of textDocs) {
     try {
       const absolutePath = getVaultAbsolutePathFromBlobPath(row.storage_blob_path);
       const text = await fs.readFile(absolutePath, "utf8");
@@ -580,7 +608,7 @@ async function readPdfDocuments(rows: PatientDocumentRow[], label: "vault" | "pa
     )
   );
   const blocks: string[] = [];
-  for (const row of pdfRows.slice(0, 6)) {
+  for (const row of pdfRows) {
     try {
       let buffer: Buffer;
       if (row.storage_provider === "local_fs" && row.storage_container === "vault") {
@@ -790,14 +818,32 @@ async function generateClinicalNote(input: {
     "Extract only clinically relevant facts from the provided patient context for documentation.",
     "Output plain text with these headings only:",
     "DEMOGRAPHICS",
+    ...(input.noteType === "discharge_summary"
+      ? [
+          "ADMISSION / DISCHARGE / TRANSFER FACTS",
+          "RELAPSE TRIGGERS AND PREVENTION PLANS",
+          "SNAP",
+        ]
+      : []),
     "SUBSTANCE USE HISTORY",
     "FUNCTIONAL IMPAIRMENTS",
     "MENTAL HEALTH / BIOMEDICAL",
     "LEGAL / SOCIAL DETERMINANTS",
     "TREATMENT PARTICIPATION",
+    ...(input.noteType === "discharge_summary"
+      ? [
+          "TREATMENT PROGRESS AND GAINS",
+          "VOCATIONAL / EDUCATIONAL ACHIEVEMENTS AND NEXT STEPS",
+          "REFERRALS / RESOURCES / FOLLOW UP",
+          "PATIENT COMMENTS",
+        ]
+      : []),
     "DIAGNOSIS",
     "MISSING DATA",
     "Use concise bullet points. No narrative paragraph.",
+    input.noteType === "discharge_summary"
+      ? "For discharge form extraction, search every source document for SNAP, relapse triggers, coping plans, recovery supports, discharge/transfer facts, prognosis, Dimension 1-6 progress, referrals, vocational/educational items, and patient comments."
+      : "",
     "",
     "PATIENT CONTEXT JSON:",
     JSON.stringify(
@@ -861,6 +907,24 @@ async function generateClinicalNote(input: {
       0.2
     );
   }
+  if (input.noteType === "discharge_summary" && !looksLikeDischargeForm(firstPass)) {
+    return requestCompletion(
+      [
+        buildUserPrompt(false, false),
+        "",
+        "CRITICAL DISCHARGE FORM CORRECTION:",
+        "- Follow all seven discharge form headings from the template.",
+        "- Include SNAP with Strengths, Needs, Abilities, and Preferences when source documents contain SNAP information.",
+        "- Include each relapse trigger with a matching prevention plan.",
+        "- Include Dimension 1 through Dimension 6 progress.",
+        "- Use every provided document and the extracted fact sheet. Do not rely only on the newest document.",
+        "",
+        "USE THIS EXTRACTED FACT SHEET AS PRIMARY SOURCE OF TRUTH:",
+        factSheet,
+      ].join("\n"),
+      0.18
+    );
+  }
   return firstPass;
 }
 
@@ -917,9 +981,7 @@ patientDocumentsRouter.post(
         [patientId]
       );
       if (parsed.data.noteType === "problem_list") {
-        const hasAssessment = vaultRows.some(
-          (row) => row.document_type === "vault:assessment"
-        );
+        const hasAssessment = vaultRows.some((row) => row.document_type === "vault:assessment" || row.document_type === "vault:asam_assessment");
         if (!hasAssessment) {
           res.status(400).json({
             ok: false,
@@ -929,7 +991,7 @@ patientDocumentsRouter.post(
         }
       }
       if (parsed.data.noteType === "problem_list_note") {
-        const hasAssessment = vaultRows.some((row) => row.document_type === "vault:assessment");
+        const hasAssessment = vaultRows.some((row) => row.document_type === "vault:assessment" || row.document_type === "vault:asam_assessment");
         const hasProblemList = vaultRows.some((row) => row.document_type === "vault:problem_list");
         if (!hasAssessment || !hasProblemList) {
           res.status(400).json({
@@ -940,7 +1002,7 @@ patientDocumentsRouter.post(
         }
       }
       if (parsed.data.noteType === "problem_list_review") {
-        const hasAssessment = vaultRows.some((row) => row.document_type === "vault:assessment");
+        const hasAssessment = vaultRows.some((row) => row.document_type === "vault:assessment" || row.document_type === "vault:asam_assessment");
         const hasProblemList = vaultRows.some((row) => row.document_type === "vault:problem_list");
         if (!hasAssessment || !hasProblemList) {
           res.status(400).json({
@@ -951,7 +1013,7 @@ patientDocumentsRouter.post(
         }
       }
       if (parsed.data.noteType === "treatment_plan") {
-        const hasAssessment = vaultRows.some((row) => row.document_type === "vault:assessment");
+        const hasAssessment = vaultRows.some((row) => row.document_type === "vault:assessment" || row.document_type === "vault:asam_assessment");
         const hasProblemList = vaultRows.some((row) => row.document_type === "vault:problem_list");
         if (!hasAssessment || !hasProblemList) {
           res.status(400).json({

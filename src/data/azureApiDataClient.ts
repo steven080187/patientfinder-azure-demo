@@ -1,4 +1,11 @@
 import type {
+  AdminSheetCreatePayload,
+  AdminSheetDetail,
+  AdminSheetSummary,
+  AdminWorkbookCreatePayload,
+  AdminWorkbookDetail,
+  AdminWorkbookSummary,
+  AdminWorkbookUpdatePayload,
   AiGeneratedNote,
   AzureDemoUser,
   DashboardPayload,
@@ -7,6 +14,9 @@ import type {
   LiveGroupDetailResponse,
   LiveGroupStartResponse,
   PatientDocumentSummary,
+  PatientBridgeWorkbookDetail,
+  PatientBridgeWorkbookSummary,
+  PatientBridgeWorkbookUploadPayload,
   PatientVaultDocumentSummary,
   PatientsPagePayload,
   PublicGroupSessionInfo,
@@ -91,8 +101,10 @@ async function requestJson<T>(path: string): Promise<T> {
       });
     }
     const response = await fetch(requestUrl, {
+      cache: "no-store",
       headers: {
         "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
     });
@@ -329,6 +341,60 @@ export const azureApiDataClient: DataClient = {
     const response = await sendJson<{ document: PatientVaultDocumentSummary }>(`/api/patients/${patientId}/vault/paste-text`, payload);
     return response.document;
   },
+  async listAdminSheets() {
+    const response = await requestJson<{ sheets: AdminSheetSummary[] }>("/api/admin/patientbridge/sheets");
+    return response.sheets ?? [];
+  },
+  async getAdminSheet(sheetId: string) {
+    const response = await requestJson<{ sheet: AdminSheetDetail }>(`/api/admin/patientbridge/sheets/${sheetId}`);
+    return response.sheet;
+  },
+  async createAdminSheet(payload: AdminSheetCreatePayload) {
+    const response = await sendJson<{ sheet: AdminSheetDetail }>("/api/admin/patientbridge/sheets", payload);
+    return response.sheet;
+  },
+  async updateAdminSheetCell(sheetId: string, payload: { rowId: string; columnId: string; value: string | null }) {
+    await patchJson(`/api/admin/patientbridge/sheets/${sheetId}/cells`, payload);
+  },
+  async updateAdminSheetRowLink(sheetId: string, payload: { rowId: string; linkedPatientId: string | null }) {
+    await patchJson(`/api/admin/patientbridge/sheets/${sheetId}/rows`, payload);
+  },
+  async listAdminWorkbooks() {
+    const response = await requestJson<{ workbooks: AdminWorkbookSummary[] }>("/api/admin/patientbridge/workbooks");
+    return response.workbooks ?? [];
+  },
+  async getAdminWorkbook(workbookId: string) {
+    const response = await requestJson<{ workbook: AdminWorkbookDetail }>(`/api/admin/patientbridge/workbooks/${workbookId}`);
+    return response.workbook;
+  },
+  async createAdminWorkbook(payload: AdminWorkbookCreatePayload) {
+    const response = await sendJson<{ workbook: AdminWorkbookDetail }>("/api/admin/patientbridge/workbooks", payload);
+    return response.workbook;
+  },
+  async updateAdminWorkbook(workbookId: string, payload: AdminWorkbookUpdatePayload) {
+    const response = await sendJson<{ workbook: AdminWorkbookDetail }>(`/api/admin/patientbridge/workbooks/${workbookId}`, payload);
+    return response.workbook;
+  },
+  async listPatientBridgeWorkbooks() {
+    const response = await requestJson<{ workbooks: PatientBridgeWorkbookSummary[] }>("/api/admin/patientbridge/m365/workbooks");
+    return response.workbooks ?? [];
+  },
+  async getPatientBridgeWorkbook(workbookId: string) {
+    const response = await requestJson<{ workbook: PatientBridgeWorkbookDetail }>(
+      `/api/admin/patientbridge/m365/workbooks/${workbookId}`
+    );
+    return response.workbook;
+  },
+  async getPatientBridgeWorkbookPreview(workbookId: string) {
+    const response = await requestJson<{ preview: PatientBridgeWorkbookDetail["preview"] }>(
+      `/api/admin/patientbridge/m365/workbooks/${workbookId}/preview`
+    );
+    return response.preview ?? null;
+  },
+  async uploadPatientBridgeWorkbook(payload: PatientBridgeWorkbookUploadPayload) {
+    const response = await sendJson<{ workbook: PatientBridgeWorkbookDetail }>("/api/admin/patientbridge/m365/workbooks", payload);
+    return response.workbook;
+  },
   async generateAiPatientNote(
     patientId: string,
     payload: {
@@ -394,6 +460,9 @@ export const azureApiDataClient: DataClient = {
   },
   async replyToNotification(notificationId, payload) {
     await sendJson(`/api/notifications/${notificationId}/reply`, payload);
+  },
+  async deleteNotificationThread(notificationId) {
+    await deleteJson(`/api/notifications/${notificationId}/thread`);
   },
   async bulkUpsertPatients(payload) {
     await sendJson("/api/patients/bulk-upsert", payload);

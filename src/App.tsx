@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { getDataClient } from "./data/client";
 import {
   clearAzureApiDocumentBlobCache,
@@ -23,8 +24,12 @@ import { CONSENT_FORMS } from './consentForms';
 import type { ConsentForm } from './consentForms';
 import patientFinderLogo from "./assets/patientfinder-logo.svg";
 import ncaddLogo from "./assets/ncadd-logo.png";
-import themeButtonLogo from "./assets/theme-button-logo.svg";
+import themeButtonLogo from "./assets/theme-button-logo-white.svg";
+import nameSlayerSeedRules from "./nameSlayerSeedRules.json";
+import { PatientBridgeWorkbookPage } from "./admin/PatientBridgeWorkbookPage";
 import "./App.css";
+
+GlobalWorkerOptions.workerSrc = new URL("./pdf.worker.bootstrap.js", import.meta.url).toString();
 
 /* -------------------- Types -------------------- */
 
@@ -77,6 +82,302 @@ type Session = {
   patientIds: string[];
   attendance: Record<string, AttendanceStatus>;
 };
+
+type NameSlayerBusyState = false | "extracting" | "saving";
+type NameSlayerStage = "splash" | "workflow";
+type NameSlayerRule = {
+  kind: "regex";
+  pattern: string;
+  placeholder: string;
+};
+
+const NAME_SLAYER_RULES = nameSlayerSeedRules as NameSlayerRule[];
+
+function MobileMenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  );
+}
+
+function MobileGlanceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M2.4 12s3.4-6 9.6-6 9.6 6 9.6 6-3.4 6-9.6 6-9.6-6-9.6-6Z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </svg>
+  );
+}
+
+function StatusDiamondIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M6 8.5h12" />
+      <path d="M6 12h8" />
+      <path d="M6 15.5h10" />
+      <circle cx="17" cy="8.5" r="1.1" />
+      <circle cx="15" cy="12" r="1.1" />
+      <circle cx="16" cy="15.5" r="1.1" />
+    </svg>
+  );
+}
+
+function SortDiamondIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M8 4v13" />
+      <path d="M5.5 14.5 8 17l2.5-2.5" />
+      <path d="M16 20V7" />
+      <path d="M13.5 9.5 16 7l2.5 2.5" />
+    </svg>
+  );
+}
+
+function SheetDiamondIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+      <path d="M5 10h14" />
+      <path d="M10 5v14" />
+    </svg>
+  );
+}
+
+function CardsDiamondIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="5" y="6" width="8" height="12" rx="2" />
+      <rect x="11" y="6" width="8" height="12" rx="2" />
+    </svg>
+  );
+}
+
+function MobileLayoutIcon({ cards }: { cards: boolean }) {
+  return cards ? (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M4 9h16M4 15h16" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M11 4v16" />
+      <path d="M4 10h7M4 14h7M13 10h7M13 14h7" />
+    </svg>
+  );
+}
+
+function MobileSortIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M8 4v14" />
+      <path d="M4.5 15.5 8 19l3.5-3.5" />
+      <path d="M16 20V6" />
+      <path d="M12.5 8.5 16 5l3.5 3.5" />
+    </svg>
+  );
+}
+
+function tokenizeNameSlayerText(text: string) {
+  const tokens: { text: string; start: number; end: number }[] = [];
+  const re = /(\s+|[^\s]+)/g;
+  let match: RegExpExecArray | null;
+  let index = 0;
+  while ((match = re.exec(text))) {
+    tokens.push({ text: match[0], start: index, end: index + match[0].length });
+    index += match[0].length;
+  }
+  return tokens;
+}
+
+function escapeNameSlayerPattern(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildNameSlayerPattern(term: string) {
+  const normalized = term.trim().replace(/\s+/g, " ");
+  if (!normalized) return null;
+  const pieces = normalized.split(" ").map(escapeNameSlayerPattern);
+  return new RegExp(`\\b${pieces.join("\\s+")}\\b`, "gi");
+}
+
+function applyNameSlayerExtraTermRedactions(text: string, extraTerms: string[]) {
+  let next = text;
+  for (const rawTerm of extraTerms) {
+    const term = rawTerm.trim();
+    if (!term) continue;
+    const pattern = buildNameSlayerPattern(term);
+    if (!pattern) continue;
+    next = next.replace(pattern, "{Name}");
+  }
+  return next;
+}
+
+function getNameSlayerPatientTerms(patientName: string) {
+  const normalized = patientName.trim().replace(/\s+/g, " ");
+  if (!normalized) return [];
+  const parts = normalized.split(" ").map((part) => part.trim()).filter(Boolean);
+  const terms = new Set<string>([normalized]);
+  parts.forEach((part) => {
+    if (part.length >= 2) terms.add(part);
+  });
+  if (parts.length >= 2) {
+    terms.add(parts.slice(0, 2).join(" "));
+    terms.add(parts.slice(-2).join(" "));
+  }
+  return [...terms];
+}
+
+function applyNameSlayerRedactions(text: string, extraTerms: string[] = []) {
+  let next = text;
+  const nextLabel = String.raw`\s+\b(?:dob|date of birth|birth date|phone|email|address|mrn|medical record number|patient id|client id|case number|counselor name|provider name|provider|name)\s*[:\-]`;
+  next = next.replace(
+    new RegExp(String.raw`\b(?:patient name|client name|name)\s*[:\-]\s*([^\r\n]+?)(?=${nextLabel}|$)`, "gi"),
+    (match, value) => match.replace(value, "{PatientName}"),
+  );
+  next = next.replace(
+    new RegExp(String.raw`\b(?:counselor name|provider name|provider)\s*[:\-]\s*([^\r\n]+?)(?=${nextLabel}|$)`, "gi"),
+    (match, value) => match.replace(value, "{ProviderName}"),
+  );
+  next = next.replace(
+    new RegExp(String.raw`\b(?:dob|date of birth|birth date)\s*[:\-]\s*([^\r\n]+?)(?=${nextLabel}|$)`, "gi"),
+    (match, value) => match.replace(value, "{DOB}"),
+  );
+  next = next.replace(
+    new RegExp(String.raw`\b(?:mrn|medical record number|patient id|client id|case number)\s*[:\-]\s*([^\r\n]+?)(?=${nextLabel}|$)`, "gi"),
+    (match, value) => match.replace(value, "{ID}"),
+  );
+  next = next.replace(/\b(?:address|home address)\s*[:\-]\s*([^\r\n]+)/gi, (match, value) => match.replace(value, "{Address}"));
+  next = next.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "{Email}");
+  next = next.replace(/\b(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b/g, "{Phone}");
+  next = next.replace(/\b\d{3}-\d{2}-\d{4}\b/g, "{SSN}");
+  next = next.replace(/\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/g, "{Date}");
+  next = next.replace(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2},\s+\d{4}\b/gi, "{Date}");
+  next = next.replace(/\b\d{1,5}\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,4}\s+(?:st|street|ave|avenue|rd|road|blvd|boulevard|ln|lane|dr|drive|ct|court|way|pkwy|parkway)\b(?:\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)?(?:\s+[A-Z]{2}\b)?(?:\s+\d{5}(?:-\d{4})?)?/gi, "{Address}");
+  for (const rule of NAME_SLAYER_RULES) {
+    try {
+      next = next.replace(new RegExp(rule.pattern, "gi"), rule.placeholder);
+    } catch (error) {
+      console.error("Invalid Name Slayer rule:", rule.pattern, error);
+    }
+  }
+  next = applyNameSlayerExtraTermRedactions(next, extraTerms);
+  return next;
+}
+
+function redactNameSlayerRange(text: string, start: number | null, end: number | null, placeholder = "{ManualRedaction}") {
+  if (start == null || end == null || start >= end) return text;
+  return `${text.slice(0, start)}${placeholder}${text.slice(end)}`;
+}
+
+function normalizePdfLine(line: string) {
+  return line.replace(/\s+/g, " ").trim();
+}
+
+function isAlwaysPdfBoilerplateLine(line: string) {
+  if (!line) return false;
+  if (/^(?:\d+|\d+\s*\/\s*\d+|page\s+\d+\s+of\s+\d+)$/i.test(line)) return true;
+  if (/\bhttps?:\/\/\S+/i.test(line) || /\bwww\./i.test(line)) return true;
+  if (/\b\d+\s*\/\s*\d+\b/.test(line)) return true;
+  return false;
+}
+
+function isRepeatedPdfBoilerplateLine(line: string) {
+  return /^\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*[AP]M\b/i.test(line);
+}
+
+function cleanPdfPages(pageTexts: string[]) {
+  const splitPages = pageTexts.map((pageText) =>
+    pageText
+      .split(/\r?\n/)
+      .map((line) => normalizePdfLine(line))
+      .filter(Boolean),
+  );
+
+  const counts = new Map<string, number>();
+  for (const pageLines of splitPages) {
+    const seenOnPage = new Set(pageLines);
+    for (const line of seenOnPage) {
+      counts.set(line, (counts.get(line) || 0) + 1);
+    }
+  }
+
+  const minRepeatCount = Math.max(2, Math.ceil(pageTexts.length * 0.6));
+  return splitPages
+    .map((pageLines) =>
+      pageLines
+        .filter((line) => {
+          if (isAlwaysPdfBoilerplateLine(line)) return false;
+          const repeats = counts.get(line) || 0;
+          if (repeats < minRepeatCount) return true;
+          return !isRepeatedPdfBoilerplateLine(line);
+        })
+        .join("\n")
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+function shouldOcrPdf(pageTexts: string[]) {
+  const lines = cleanPdfPages(pageTexts)
+    .flatMap((pageText) => pageText.split("\n"))
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) return true;
+
+  const uniqueLines = new Set(lines);
+  if (uniqueLines.size <= 2) return true;
+
+  const boilerplateHits = lines.filter((line) => (
+    /\bhttps?:\/\/\S+/i.test(line)
+    || /\bwww\./i.test(line)
+    || /\b\d+\s*\/\s*\d+\b/.test(line)
+    || /\b\d{1,2}:\d{2}\s*[AP]M\b/i.test(line)
+  )).length;
+
+  return boilerplateHits / lines.length >= 0.6 && lines.join(" ").length < 600;
+}
+
+async function extractTextFromPdf(file: File) {
+  const buffer = await file.arrayBuffer();
+  const pdf = await getDocument({ data: buffer }).promise;
+  const pages: string[] = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => (item as { str: string }).str).join(" "));
+  }
+  const cleanedPages = cleanPdfPages(pages);
+  const extracted = cleanedPages.join("\n\n").trim();
+  if (extracted && !shouldOcrPdf(pages)) return extracted;
+
+  const { createWorker } = await import("tesseract.js");
+  const worker = await createWorker("eng", 1, {
+    workerPath: "/ocr/worker.min.js",
+    corePath: "/ocr/core",
+    langPath: "/ocr/lang/4.0.0/",
+  });
+  const ocrPages: string[] = [];
+  try {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) continue;
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: context, canvas, viewport }).promise;
+      const { data } = await worker.recognize(canvas);
+      ocrPages.push(data.text || "");
+    }
+  } finally {
+    await worker.terminate();
+  }
+  return cleanPdfPages(ocrPages).join("\n\n");
+}
 
 type AttendanceEntry = {
   sessionId: string;
@@ -139,6 +440,8 @@ type PatientRosterDetails = {
 
 type InAppNotification = {
   id: string;
+  threadId?: string;
+  parentNotificationId?: string;
   title: string;
   message: string;
   priority: "normal" | "urgent";
@@ -146,15 +449,18 @@ type InAppNotification = {
   recipientEmail?: string;
   recipientUserId?: string;
   senderEmail?: string;
+  senderUserId?: string;
   createdAt: string;
   readAt?: string;
 };
 
-type Patient = {
+export type Patient = {
   id: string;
   displayName: string;
   mrn?: string;
+  externalId?: string;
   dateOfBirth?: string;
+  status?: string;
   kind: PatientKind;
 
   intakeDate: string; // YYYY-MM-DD
@@ -174,6 +480,7 @@ type Patient = {
 
   intakeAnswers?: IntakeAnswers;
   rosterDetails?: PatientRosterDetails;
+  compliance?: PatientCompliance;
 };
 
 type PatientCompliance = {
@@ -187,6 +494,8 @@ type PatientCompliance = {
   lastTreatmentPlanUpdate?: string;
   treatmentPlanCycleDays?: 90 | 180;
 };
+
+type CompliancePatch = Partial<PatientCompliance> & { resetProblemListCycle?: boolean };
 
 type PatientAttendanceRegimen = {
   requiredVisitDaysPerWeek: number;
@@ -210,7 +519,8 @@ type Route =
   | { name: "patient"; patientId: string }
   | { name: "billing" }
   | { name: "groups" }
-  | { name: "mobile" };
+  | { name: "mobile" }
+  | { name: "patientbridge" };
 
 type AuthedRoute = Route | { name: "attendance" };
 type AuthMode = "demo" | "entra";
@@ -303,55 +613,6 @@ function setStoredTreatmentPlanCycleDays(patientId: string, days: 90 | 180) {
   }
 }
 
-function firstNonEmptyString(...values: unknown[]) {
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed) return trimmed;
-  }
-  return "";
-}
-
-function normalizeImportDate(value: unknown, fallback?: string) {
-  const parsed = toDateOnly(value);
-  return parsed ?? fallback ?? null;
-}
-
-function resolveImportedPatientName(row: any) {
-  const direct = firstNonEmptyString(
-    row?.full_name,
-    row?.fullName,
-    row?.name,
-    row?.patient_name,
-    row?.patientName,
-    row?.submitted_full_name
-  );
-  if (direct) return direct;
-
-  const first = firstNonEmptyString(
-    row?.first_name,
-    row?.firstName,
-    row?.given_name,
-    row?.givenName,
-    row?.demographics?.first_name,
-    row?.demographics?.firstName
-  );
-  const last = firstNonEmptyString(
-    row?.last_name,
-    row?.lastName,
-    row?.family_name,
-    row?.familyName,
-    row?.demographics?.last_name,
-    row?.demographics?.lastName
-  );
-  return `${first} ${last}`.trim();
-}
-
-function resolveImportedPatientId(row: any) {
-  const rawId = firstNonEmptyString(row?.id, row?.patient_id, row?.patientId);
-  return rawId || crypto.randomUUID();
-}
-
 function fmt(iso?: string) {
   if (!iso) return "—";
   const normalized = toDateOnly(iso);
@@ -389,7 +650,7 @@ function hashInstallSeed(value: string) {
 
 function getPublicGroupTokenFromPath() {
   if (typeof window === "undefined") return null;
-  const match = window.location.pathname.match(/^\/group-sign\/([^/]+)$/);
+  const match = window.location.pathname.match(/^\/(?:group-sign|g)\/([^/]+)$/);
   if (!match?.[1]) return null;
   try {
     return decodeURIComponent(match[1]);
@@ -448,6 +709,13 @@ function pillClass(kind: PatientKind) {
   return "pill pill-past";
 }
 
+function formatProgramBadge(primaryProgram?: string) {
+  const text = String(primaryProgram ?? "").trim();
+  if (text.startsWith("2.1")) return "2.1 Intensive Outpatient";
+  if (text.startsWith("1.0")) return "1.0 Outpatient";
+  return "—";
+}
+
 function sortVal(p: Patient, key: SortKey) {
   switch (key) {
     case "name":
@@ -499,6 +767,16 @@ function getSingle(ans: IntakeAnswers | undefined, key: string) {
 function getMulti(ans: IntakeAnswers | undefined, key: string) {
   if (!ans) return [];
   return ans.multis[key] ?? [];
+}
+
+function parseIntakeAnswers(rawJson: unknown): IntakeAnswers | undefined {
+  const intake = (rawJson as any)?.sections?.intake;
+  if (!intake) return undefined;
+  return {
+    fields: ((intake.fields ?? {}) as Record<string, string>) ?? {},
+    singles: ((intake.radios ?? {}) as Record<string, string>) ?? {},
+    multis: ((intake.multi ?? {}) as Record<string, string[]>) ?? {},
+  };
 }
 
 function indexPatient(p: Patient) {
@@ -687,6 +965,77 @@ function buildHighlightMap(notes: InAppNotification[]) {
   return map;
 }
 
+type HighlightThread = {
+  threadId: string;
+  patientId?: string;
+  patientName: string;
+  latest: InAppNotification;
+  messages: InAppNotification[];
+  unreadForMe: boolean;
+  startedByMe: boolean;
+  receivedByMe: boolean;
+};
+
+function buildHighlightThreads(
+  notes: InAppNotification[],
+  patients: Patient[],
+  currentUserEmail: string,
+  currentUserId: string
+) {
+  const email = currentUserEmail.toLowerCase();
+  const grouped = new Map<string, InAppNotification[]>();
+  notes.forEach((note) => {
+    const threadId = note.threadId ?? note.id;
+    if (!grouped.has(threadId)) grouped.set(threadId, []);
+    grouped.get(threadId)!.push(note);
+  });
+
+  const threads = [...grouped.entries()].map(([threadId, items]) => {
+    const ordered = [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const latest = ordered[ordered.length - 1];
+    const related = ordered.filter((note) => {
+      const matchesRecipient =
+        (note.recipientEmail && note.recipientEmail.toLowerCase() === email) ||
+        (note.recipientUserId && note.recipientUserId.toLowerCase() === currentUserId.toLowerCase());
+      const matchesSender =
+        (note.senderEmail && note.senderEmail.toLowerCase() === email) ||
+        (note.senderUserId && note.senderUserId.toLowerCase() === currentUserId.toLowerCase());
+      return matchesRecipient || matchesSender;
+    });
+    if (!related.length) return null;
+    const patientId = latest.patientId ?? related.find((note) => note.patientId)?.patientId;
+    const patient = patientId ? patients.find((entry) => normalizePatientId(entry.id) === normalizePatientId(patientId)) : null;
+    const unreadForMe = related.some(
+      (note) =>
+        !note.readAt &&
+        ((note.recipientEmail && note.recipientEmail.toLowerCase() === email) ||
+          (note.recipientUserId && note.recipientUserId.toLowerCase() === currentUserId.toLowerCase()))
+    );
+    const startedByMe = related.some(
+      (note) =>
+        (note.senderEmail && note.senderEmail.toLowerCase() === email) ||
+        (note.senderUserId && note.senderUserId.toLowerCase() === currentUserId.toLowerCase())
+    );
+    const receivedByMe = related.some(
+      (note) =>
+        (note.recipientEmail && note.recipientEmail.toLowerCase() === email) ||
+        (note.recipientUserId && note.recipientUserId.toLowerCase() === currentUserId.toLowerCase())
+    );
+    return {
+      threadId,
+      patientId: patientId ?? undefined,
+      patientName: patient?.displayName ?? (latest.title.replace(/^Patient highlight:\s*/i, "") || "Unknown patient"),
+      latest,
+      messages: related,
+      unreadForMe,
+      startedByMe,
+      receivedByMe,
+    } satisfies HighlightThread;
+  });
+
+  return threads.filter((thread): thread is HighlightThread => Boolean(thread)).sort((a, b) => b.latest.createdAt.localeCompare(a.latest.createdAt));
+}
+
 function monthKey(iso: string) {
   return toDateOnly(iso)?.slice(0, 7) ?? todayIso().slice(0, 7);
 }
@@ -764,38 +1113,6 @@ function getAttendanceTone(patient: Patient, sessions: Session[], weekDate: stri
   return "good" as const;
 }
 
-function AttendanceStatusChip({
-  patient,
-  sessions,
-  weekDate,
-}: {
-  patient: Patient;
-  sessions: Session[];
-  weekDate: string;
-}) {
-  const stats = useMemo(() => getWeeklyAttendanceStats(patient, sessions, weekDate), [patient, sessions, weekDate]);
-  const tone = getAttendanceTone(patient, sessions, weekDate);
-
-  if (!stats.goal) return <span className="attendanceStatusChip neutral">No program goal</span>;
-
-  let text = "";
-  if (stats.goal.kind === "range") {
-    text =
-      tone === "behind"
-        ? `${fmtHours(stats.attendedHours)} this week • below min`
-        : tone === "over"
-          ? `${fmtHours(stats.attendedHours)} this week • over range`
-          : `${fmtHours(stats.attendedHours)} this week • on track`;
-  } else {
-    text =
-      tone === "over"
-        ? `${fmtHours(stats.attendedHours)} this week • over cap`
-        : `${fmtHours(stats.attendedHours)} this week • within cap`;
-  }
-
-  return <span className={`attendanceStatusChip ${tone}`}>{text}</span>;
-}
-
 function getWeeklyHistory(patient: Patient, sessions: Session[]) {
   const goal = getAttendanceGoal(patient.primaryProgram);
   const buckets = new Map<string, number>();
@@ -857,7 +1174,15 @@ function formatDueDaysLabel(days: number | null, emptyLabel: string) {
   return `Due in ${days} days`;
 }
 
-function getProblemListSummary(compliance: PatientCompliance | undefined) {
+function getProblemListSummary(compliance: PatientCompliance | undefined, patient?: Patient) {
+  if (patient && patient.kind === "Former Patient") {
+    return {
+      tone: "neutral" as const,
+      reviewText: "Problem list ended at this program",
+      updateText: "No upcoming problem list review or update",
+    };
+  }
+
   const config = compliance ?? {};
   if (!config.problemListDate) {
     return {
@@ -891,7 +1216,17 @@ function getProblemListSummary(compliance: PatientCompliance | undefined) {
   };
 }
 
-function getNextProblemListMilestone(compliance: PatientCompliance | undefined) {
+function getLastProblemListReviewLabel(compliance: PatientCompliance | undefined, patient?: Patient) {
+  if (patient && patient.kind === "Former Patient") return "";
+  const config = compliance ?? {};
+  if (!config.problemListDate || !config.lastProblemListReview) return "";
+  const review60 = addDaysIso(config.problemListDate, 60);
+  const reviewType = config.lastProblemListReview < review60 ? "30-day" : "60-day";
+  return `${reviewType}: ${fmt(config.lastProblemListReview)}`;
+}
+
+function getNextProblemListMilestone(compliance: PatientCompliance | undefined, patient?: Patient) {
+  if (patient && patient.kind === "Former Patient") return null;
   const config = compliance ?? {};
   if (!config.problemListDate) return null;
   const review30 = addDaysIso(config.problemListDate, 30);
@@ -907,9 +1242,23 @@ function getProblemListInitialDueDate(patient: Patient) {
   return addDaysIso(patient.intakeDate, 7);
 }
 
+function isTreatmentPlanEnded(patient: Patient) {
+  return patient.kind === "RSS" || patient.kind === "RSS+" || patient.kind === "Former Patient";
+}
+
+function isProblemListEnded(patient: Patient) {
+  return patient.kind === "Former Patient";
+}
+
 function getNextUpSummary(patient: Patient, compliance: PatientCompliance | undefined, todayIsoValue: string) {
   const config = compliance ?? {};
+  if (isProblemListEnded(patient) && isTreatmentPlanEnded(patient)) {
+    return { label: "No upcoming items", tone: "neutral" as const };
+  }
   if (!config.problemListDate) {
+    if (patient.kind !== "New Patient") {
+      return { label: "Set Problem List", tone: "neutral" as const };
+    }
     const dueDate = addDaysIso(patient.intakeDate, 7);
     const delta = dayDiff(todayIsoValue, dueDate);
     const tone = delta < 0 ? "behind" : delta <= 3 ? "due" : "good";
@@ -917,16 +1266,19 @@ function getNextUpSummary(patient: Patient, compliance: PatientCompliance | unde
   }
 
   const cycleDays = config.treatmentPlanCycleDays ?? 90;
+  const treatmentPlanEnded = isTreatmentPlanEnded(patient);
   const problemListNext = getNextProblemListMilestone(config);
 
   const candidates = [
     ...(problemListNext ? [problemListNext] : []),
-    ...(!config.treatmentPlanDate ? [{ key: "tx_initial", label: "Tx Plan", dueDate: addDaysIso(patient.intakeDate, 30) }] : []),
-    {
-      key: "tx_update",
-      label: "Tx Plan Update",
-      dueDate: addDaysIso(config.lastTreatmentPlanUpdate ?? config.treatmentPlanDate ?? addDaysIso(patient.intakeDate, 30), cycleDays),
-    },
+    ...(!treatmentPlanEnded && !config.treatmentPlanDate ? [{ key: "tx_initial", label: "Tx Plan", dueDate: addDaysIso(patient.intakeDate, 30) }] : []),
+    ...(!treatmentPlanEnded
+      ? [{
+          key: "tx_update",
+          label: "Tx Plan Update",
+          dueDate: addDaysIso(config.lastTreatmentPlanUpdate ?? config.treatmentPlanDate ?? addDaysIso(patient.intakeDate, 30), cycleDays),
+        }]
+      : []),
   ];
 
   const next = candidates.reduce((earliest, item) => {
@@ -944,23 +1296,22 @@ function getNextUpSummary(patient: Patient, compliance: PatientCompliance | unde
 }
 
 function getSheetRowData(patient: Patient, compliance: PatientCompliance | undefined) {
-  const problemListDueDates = getProblemListDueDates(compliance);
   const treatmentPlanDueDates = getTreatmentPlanDueDates(patient, compliance);
   const roster = patient.rosterDetails ?? {};
-  const locCode = (patient.primaryProgram ?? "").includes("2.1") ? "2.1" : (patient.primaryProgram ?? "").includes("1.0") ? "1.0" : "—";
-  const locDocBubble = `${locCode === "—" ? "LOC —" : `LOC ${locCode}`} • ${
-    roster.drugOfChoice?.length ? roster.drugOfChoice.join(", ") : "DOC —"
-  }`;
+  const programSummary = formatProgramBadge(patient.primaryProgram);
+  const docSummary = formatSpreadsheetDrugChoices(roster.drugOfChoice);
+  const programDocBubble = `${programSummary} • ${docSummary}`;
+  const lastPlReview = getLastProblemListReviewLabel(compliance, patient);
+  const daysInTreatment = `${Math.max(0, dayDiff(patient.intakeDate, todayIso()))} days`;
   return {
     clientName: patient.displayName,
     sageId: patient.mrn ?? "—",
-    locDocBubble,
+    programDocBubble,
     admitDate: fmt(patient.intakeDate),
     problemListInitial: compliance?.problemListDate ? fmt(compliance.problemListDate) : "—",
-    problemListReview: problemListDueDates?.nextReview ? fmt(problemListDueDates.nextReview) : "—",
-    problemListUpdate: problemListDueDates?.nextUpdate ? fmt(problemListDueDates.nextUpdate) : "—",
+    lastPlReview,
+    daysInTreatment,
     treatmentPlanInitial: treatmentPlanDueDates?.initial ? fmt(treatmentPlanDueDates.initial) : "—",
-    treatmentPlanUpdate: treatmentPlanDueDates?.nextUpdate ? fmt(treatmentPlanDueDates.nextUpdate) : "—",
     medicalPhysApt: roster.medicalPhysApt ?? "—",
     medForm: roster.medFormStatus ?? "—",
     referringAgency: roster.referringAgency ?? "—",
@@ -972,9 +1323,10 @@ function getSheetRowData(patient: Patient, compliance: PatientCompliance | undef
   };
 }
 
-function getProblemListDueDates(compliance: PatientCompliance | undefined) {
+function getProblemListDueDates(compliance: PatientCompliance | undefined, patient?: Patient) {
+  if (patient && patient.kind === "Former Patient") return null;
   if (!compliance?.problemListDate) return null;
-  const nextMilestone = getNextProblemListMilestone(compliance);
+  const nextMilestone = getNextProblemListMilestone(compliance, patient);
   return {
     nextReview: nextMilestone?.label === "PL Review" ? nextMilestone.dueDate : null,
     nextUpdate: addDaysIso(compliance.problemListDate, 90),
@@ -985,15 +1337,32 @@ function getTreatmentPlanDueDates(patient: Patient, compliance: PatientComplianc
   const config = compliance ?? {};
   const cycleDays = config.treatmentPlanCycleDays ?? 90;
   const initial = config.treatmentPlanDate ?? addDaysIso(patient.intakeDate, 30);
+  if (isTreatmentPlanEnded(patient)) {
+    return {
+      initial,
+      nextUpdate: undefined as string | undefined,
+      ended: true,
+    };
+  }
   return {
     initial,
     nextUpdate: addDaysIso(config.lastTreatmentPlanUpdate ?? initial, cycleDays),
+    ended: false,
   };
 }
 
 function getTreatmentPlanSummary(patient: Patient, compliance: PatientCompliance | undefined) {
   const config = compliance ?? {};
   const today = todayIso();
+
+  if (isTreatmentPlanEnded(patient)) {
+    return {
+      tone: "neutral" as const,
+      reviewText: "Treatment plan ended at this program",
+      updateText: "No upcoming treatment plan review or update",
+      ended: true,
+    };
+  }
 
   if (!config.treatmentPlanDate) {
     const initialDue = addDaysIso(patient.intakeDate, 30);
@@ -1002,6 +1371,7 @@ function getTreatmentPlanSummary(patient: Patient, compliance: PatientCompliance
       tone: initialDelta < 0 ? "behind" : initialDelta <= 7 ? "neutral" : "good",
       reviewText: buildDueLabel(initialDelta, initialDue, "Initial treatment plan"),
       updateText: "Treatment plan update starts after the initial plan is created",
+      ended: false,
     };
   }
 
@@ -1012,6 +1382,7 @@ function getTreatmentPlanSummary(patient: Patient, compliance: PatientCompliance
     tone: updateDelta < 0 ? "behind" : updateDelta <= 14 ? "neutral" : "good",
     reviewText: `Treatment plan set ${fmt(config.treatmentPlanDate)}`,
     updateText: `${buildDueLabel(updateDelta, nextUpdate, "Treatment plan update")} (${cycleDays}-day cycle)`,
+    ended: false,
   };
 }
 
@@ -1068,7 +1439,7 @@ function getPatientWorkItems(patient: Patient, compliance: PatientCompliance | u
   const attendance = getWeeklyAttendanceStats(patient, sessions, weekDate);
   const attendanceTone = getAttendanceTone(patient, sessions, weekDate);
   const drug = getDrugTestSummary(patient, compliance, weekDate);
-  const problemList = getProblemListSummary(compliance);
+  const problemList = getProblemListSummary(compliance, patient);
   const treatmentPlan = getTreatmentPlanSummary(patient, compliance);
   const items: WorkItem[] = [];
 
@@ -1117,8 +1488,12 @@ function getPatientWorkItems(patient: Patient, compliance: PatientCompliance | u
     id: `${patient.id}-tx-plan`,
     tone: treatmentPlan.tone as WorkItem["tone"],
     title: "Treatment plan",
-    detail: treatmentPlan.tone === "behind" ? `${treatmentPlan.reviewText} • ${treatmentPlan.updateText}` : treatmentPlan.updateText,
-    sortScore: treatmentPlan.tone === "behind" ? 2 : treatmentPlan.tone === "neutral" ? 4 : 7,
+    detail: treatmentPlan.ended
+      ? treatmentPlan.reviewText
+      : treatmentPlan.tone === "behind"
+        ? `${treatmentPlan.reviewText} • ${treatmentPlan.updateText}`
+        : treatmentPlan.updateText,
+    sortScore: treatmentPlan.ended ? 5 : treatmentPlan.tone === "behind" ? 2 : treatmentPlan.tone === "neutral" ? 4 : 7,
   });
 
   if (patient.nextApptDate) {
@@ -1143,18 +1518,143 @@ function toneLabel(tone: "good" | "neutral" | "behind" | "over") {
   return "Upcoming";
 }
 
-function mergePatientWithExtras(row: any, extras: PatientExtras | undefined, rosterDetails: PatientRosterDetails | undefined): Patient {
-  const normalizedKind = toPatientKind(row.status);
+function HeadEdit({ onClick, enabled = true }: { onClick: () => void; enabled?: boolean }) {
+  if (!enabled) return null;
+  return (
+    <button type="button" className="iEditBtn iEditBtnHead" onClick={onClick} title="Edit">
+      ✎
+    </button>
+  );
+}
+
+function IntakeChoiceSelect({
+  value,
+  options,
+  onChange,
+  className,
+  buttonClassName,
+  disabled,
+}: {
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  className?: string;
+  buttonClassName?: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (anchorRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={className ? `iChoiceSelect ${className}` : "iChoiceSelect"} ref={anchorRef}>
+      <button
+        type="button"
+        className={buttonClassName ? `iChoiceSelectButton ${buttonClassName}` : "iChoiceSelectButton"}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="iChoiceSelectValue">{value || "—"}</span>
+        <span className="iChoiceSelectCaret" aria-hidden="true">▾</span>
+      </button>
+      {open && !disabled ? (
+        <div className="iChoiceSelectMenu" role="listbox">
+          <button
+            type="button"
+            className={!value ? "iChoiceSelectOption on" : "iChoiceSelectOption"}
+            onClick={() => {
+              onChange("");
+              setOpen(false);
+            }}
+          >
+            <span>—</span>
+            {!value ? <span aria-hidden="true">✓</span> : null}
+          </button>
+          {options.map((option) => {
+            const selected = value === option;
+            return (
+              <button
+                type="button"
+                key={option}
+                className={selected ? "iChoiceSelectOption on" : "iChoiceSelectOption"}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+              >
+                <span>{option}</span>
+                {selected ? <span aria-hidden="true">✓</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function derivePatientKind(
+  primaryProgram: string | null | undefined,
+  status: string | null | undefined,
+  intakeDate?: string | null
+): PatientKind {
+  const program = String(primaryProgram ?? "").trim().toLowerCase();
+  if (program) {
+    if (program === "rss+" || program === "rss_plus" || program === "rss plus") return "RSS+";
+    if (program === "rss") return "RSS";
+    if (program === "former patient" || program === "former" || program === "past patient" || program === "past" || program === "inactive") {
+      return "Former Patient";
+    }
+    if (program.startsWith("1.0") || program.startsWith("2.1")) {
+      return "Current Patient";
+    }
+  }
+
+  const normalizedKind = toPatientKind(status);
+  if (normalizedKind === "New Patient" && intakeDate && dayDiff(intakeDate, todayIso()) > 20) {
+    return "Current Patient";
+  }
+  return normalizedKind;
+}
+
+function mergePatientWithExtras(
+  row: any,
+  extras: PatientExtras | undefined,
+  rosterDetails: PatientRosterDetails | undefined,
+  intakeAnswers?: IntakeAnswers
+): Patient {
   const intakeDate = row.intake_date;
-  const kind = normalizedKind === "New Patient" && intakeDate && dayDiff(intakeDate, todayIso()) > 20
-    ? "Current Patient"
-    : normalizedKind;
+  const kind = derivePatientKind(row.primary_program, row.status, intakeDate);
 
   return {
     id: normalizePatientId(row.id),
     displayName: row.full_name || "Unknown",
     mrn: row.mrn,
+    externalId: row.external_id ?? undefined,
     dateOfBirth: row.date_of_birth ?? undefined,
+    status: row.status ?? undefined,
     kind,
     intakeDate,
     lastVisitDate: row.last_visit_date,
@@ -1165,16 +1665,59 @@ function mergePatientWithExtras(row: any, extras: PatientExtras | undefined, ros
     flags: row.flags || [],
     drugTests: extras?.drugTests ?? [],
     rosterDetails,
+    intakeAnswers,
   };
 }
 
-function mapPatientRow(row: any) {
-  const normalizedId = normalizePatientId(row.id);
-  return mergePatientWithExtras(
-    { ...row, id: normalizedId },
-    undefined,
-    undefined
+function mapPatientAggregate(row: any): Patient {
+  const roster = row?.roster_details ?? null;
+  const complianceRow = row?.compliance ?? null;
+  const drugTests = Array.isArray(row?.drug_tests)
+    ? row.drug_tests.map((entry: any) => ({
+        id: String(entry.id ?? ""),
+        date: String(entry.date ?? ""),
+        testType: String(entry.test_type ?? ""),
+        result: String(entry.result ?? ""),
+        substances: entry.substances ?? undefined,
+        notes: entry.notes ?? undefined,
+      }))
+    : [];
+  const intakeAnswers = parseIntakeAnswers(row?.latest_intake_submission?.raw_json);
+  const patient = mergePatientWithExtras(
+    row,
+    { drugTests },
+    roster
+      ? {
+          drugOfChoice: Array.isArray(roster.drug_of_choice) ? roster.drug_of_choice : undefined,
+          medicalPhysApt: roster.medical_phys_apt ?? undefined,
+          medFormStatus: roster.med_form_status ?? undefined,
+          notes: roster.notes ?? undefined,
+          referringAgency: roster.referring_agency ?? undefined,
+          reauthSapcDate: roster.reauth_sapc_date ?? undefined,
+          medicalEligibility: roster.medical_eligibility ?? undefined,
+          matStatus: roster.mat_status ?? undefined,
+          therapyTrack: roster.therapy_track ?? undefined,
+      }
+      : undefined
+    ,
+    intakeAnswers
   );
+
+  return {
+    ...patient,
+    compliance: complianceRow
+      ? {
+          drugTestMode: complianceRow.drug_test_mode ?? "none",
+          drugTestsPerWeek: complianceRow.drug_tests_per_week ?? undefined,
+          drugTestWeekday: complianceRow.drug_test_weekday != null ? String(complianceRow.drug_test_weekday) : undefined,
+          problemListDate: toDateOnly(complianceRow.problem_list_date) ?? undefined,
+          lastProblemListReview: toDateOnly(complianceRow.last_problem_list_review) ?? undefined,
+          lastProblemListUpdate: toDateOnly(complianceRow.last_problem_list_update) ?? undefined,
+          treatmentPlanDate: complianceRow.treatment_plan_date ?? undefined,
+          lastTreatmentPlanUpdate: complianceRow.treatment_plan_update ?? complianceRow.last_treatment_plan_update ?? undefined,
+        }
+      : undefined,
+  };
 }
 
 function buildSessions(sessionRows: any[], attendeeRows: any[]): Session[] {
@@ -1511,8 +2054,6 @@ export default function App() {
   const [, setLoadingPatients] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showAddPatient, setShowAddPatient] = useState(false);
-  const [jsonImporting, setJsonImporting] = useState(false);
-  const [complianceBackfillBusy, setComplianceBackfillBusy] = useState(false);
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [directoryPatients, setDirectoryPatients] = useState<Patient[]>([]);
@@ -1526,7 +2067,11 @@ export default function App() {
   const [teammateEmails, setTeammateEmails] = useState<string[]>([]);
   const [showNotificationComposer, setShowNotificationComposer] = useState(false);
   const [replyTarget, setReplyTarget] = useState<{ notificationId: string; patientName: string; title: string } | null>(null);
-  const [highlightTarget, setHighlightTarget] = useState<{ patientId: string; patientName: string } | null>(null);
+  const [highlightTarget, setHighlightTarget] = useState<{
+    patientId?: string;
+    patientName?: string;
+    recipientEmail?: string;
+  } | null>(null);
   const [caseAssignmentTarget, setCaseAssignmentTarget] = useState<{
     patientId: string;
     patientName: string;
@@ -1680,8 +2225,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (isMobileWorkspace && view === "split") {
+    if (view === "split") {
       setView("cards");
+      return;
     }
   }, [isMobileWorkspace, view]);
 
@@ -1699,8 +2245,12 @@ export default function App() {
       setMobileMenuOpen(false);
       setMobileGlanceOpen(false);
       setMobileSearchOpen(false);
+      return;
     }
-  }, [isMobileWorkspace, privacyLocked]);
+    setMobileMenuOpen(false);
+    setMobileGlanceOpen(false);
+    setMobileSearchOpen(false);
+  }, [isMobileWorkspace, privacyLocked, route.name]);
 
   useEffect(() => {
     if (isMobileWorkspace || privacyLocked) {
@@ -1836,6 +2386,7 @@ export default function App() {
     let sessionsRows: any[] = [];
     let attendeeRows: any[] = [];
     let rosterRows: any[] = [];
+    let aggregateRows: any[] = [];
     let notificationsRows: any[] = [];
     let billingRows: any[] = [];
     let groupRows: GroupSessionSummary[] = [];
@@ -1879,7 +2430,7 @@ export default function App() {
         });
       }
       const [dashboard, groups, patientsPage] = await Promise.all([
-        dataClient.getDashboard({ includePatients: false }),
+        dataClient.getDashboard({ includePatients: true }),
         dataClient.getGroupSessions(),
         patientsPagePromise,
       ]);
@@ -1901,6 +2452,31 @@ export default function App() {
       notificationsRows = (dashboard.notifications as any[]) ?? [];
       billingRows = (dashboard.billingEntries as any[]) ?? [];
       groupRows = groups;
+      aggregateRows = (dashboard.patientAggregates as any[]) ?? [];
+      const useAggregates = aggregateRows.length > 0;
+
+      if (useAggregates) {
+        complianceRows = aggregateRows
+          .map((row: any) => ({
+            patient_id: row.id,
+            ...(row.compliance ?? {}),
+          }))
+          .filter((row: any) => row.patient_id);
+        rosterRows = aggregateRows
+          .map((row: any) => ({
+            patient_id: row.id,
+            ...(row.roster_details ?? {}),
+          }))
+          .filter((row: any) => row.patient_id);
+        drugTestsRows = aggregateRows.flatMap((row: any) =>
+          Array.isArray(row.drug_tests)
+            ? row.drug_tests.map((entry: any) => ({
+                ...entry,
+                patient_id: row.id,
+              }))
+            : []
+        );
+      }
     } catch (error) {
       console.error("Error fetching Azure API dashboard:", error);
       const errorMessage = getRequestErrorMessage(error, "Unable to load patient roster.");
@@ -2033,11 +2609,17 @@ export default function App() {
     setPatients(
       patientsRows.map((row) => {
         const normalizedId = normalizePatientId(row.id);
-        return mergePatientWithExtras(
+        const aggregateRow = aggregateRows.find((entry: any) => normalizePatientId(entry.id) === normalizedId);
+        const patient = mergePatientWithExtras(
           { ...row, id: normalizedId },
           nextExtras[normalizedId] ?? nextExtras[row.id],
-          nextRosterDetails[normalizedId] ?? nextRosterDetails[row.id]
+          nextRosterDetails[normalizedId] ?? nextRosterDetails[row.id],
+          parseIntakeAnswers(aggregateRow?.latest_intake_submission?.raw_json)
         );
+        return {
+          ...patient,
+          compliance: nextCompliance[normalizedId] ?? nextCompliance[row.id],
+        };
       })
     );
     setSessions(buildSessions(sessionsRows, attendeeRows));
@@ -2059,6 +2641,8 @@ export default function App() {
     );
     const mappedNotifications = notificationsRows.map((row) => ({
         id: row.id,
+        threadId: row.thread_id ?? undefined,
+        parentNotificationId: row.parent_notification_id ?? undefined,
         title: row.title,
         message: row.message,
         priority: row.priority,
@@ -2066,6 +2650,7 @@ export default function App() {
         recipientEmail: row.recipient_email ?? undefined,
         recipientUserId: row.recipient_user_id ? String(row.recipient_user_id).toLowerCase() : undefined,
         senderEmail: row.sender_email ?? undefined,
+        senderUserId: row.sender_user_id ? String(row.sender_user_id).toLowerCase() : undefined,
         createdAt: row.created_at,
         readAt: row.read_at ?? undefined,
       }));
@@ -2078,8 +2663,14 @@ export default function App() {
   const loadPatientDirectory = useEffectEvent(async () => {
     if (!authReadyForApi) return;
     try {
-      const rows = await dataClient.getPatients();
-      setDirectoryPatients(((rows as any[]) ?? []).map((row) => mapPatientRow(row)));
+      const dashboard = await dataClient.getDashboard({ includePatients: true });
+      const aggregateRows = (dashboard.patientAggregates as any[]) ?? [];
+      if (aggregateRows.length) {
+        setDirectoryPatients(aggregateRows.map((row: any) => mapPatientAggregate(row)));
+        return;
+      }
+      const patientRows = (dashboard.patients as any[]) ?? [];
+      setDirectoryPatients(patientRows.map((row: any) => mapPatientAggregate(row)));
     } catch (error) {
       console.error("Unable to load full patient directory:", error);
     }
@@ -2120,8 +2711,6 @@ export default function App() {
     sortDir,
     forceRoster,
     caseLoadOnly,
-    loadDashboardData,
-    loadPatientDirectory,
     route.name,
     patientDocumentsTabActive,
   ]);
@@ -2151,6 +2740,7 @@ export default function App() {
     let rows = indexed;
 
     if (kindFilter !== "all") rows = rows.filter(({ p }) => matchesKindFilter(p, kindFilter, currentWeek));
+    if (kindFilter === "all") rows = rows.filter(({ p }) => p.kind !== "Former Patient");
     if (caseLoadOnly) rows = rows.filter(({ p }) => caseAssignments[p.id] === counselorId);
 
     if (qRaw) {
@@ -2165,7 +2755,7 @@ export default function App() {
 
     if (dashboardFilter) {
       rows = rows.filter(({ p }) => {
-        const due = getProblemListDueDates(complianceByPatient[p.id]);
+        const due = getProblemListDueDates(complianceByPatient[p.id], p);
         if (dashboardFilter === "dueReview") {
           if (!due?.nextReview) return false;
           const daysUntilReview = dayDiff(currentWeek, due.nextReview);
@@ -2194,20 +2784,21 @@ export default function App() {
 
   const patientPageStart = patientTotal ? patientPage * patientPageSize + 1 : 0;
   const patientPageEnd = Math.min(patientTotal, (patientPage + 1) * patientPageSize);
+  const mobileSearchPlaceholder = `Search by patient, sage ID, date, drug test, anything! • ${results.length} visible • ${patientPageStart}-${patientPageEnd} of ${patientTotal}`;
   const lockCanvasScroll = workspaceTab === "roster";
 
   const [selectedId, setSelectedId] = useState<string>(patients[0]?.id ?? "");
   const selected = useMemo(() => results.find((p) => p.id === selectedId) ?? results[0], [results, selectedId]);
   const caseLoadPatients = useMemo(
-    () => patients.filter((patient) => caseAssignments[patient.id] === counselorId),
+    () => patients.filter((patient) => patient.kind !== "Former Patient" && caseAssignments[patient.id] === counselorId),
     [patients, caseAssignments, counselorId]
   );
   const dashboardScopePatients = useMemo(
-    () => (forceRoster ? patients : caseLoadPatients),
+    () => (forceRoster ? patients.filter((patient) => patient.kind !== "Former Patient") : caseLoadPatients),
     [forceRoster, patients, caseLoadPatients]
   );
   const operationalPatients = useMemo(
-    () => (directoryPatients.length ? directoryPatients : patients),
+    () => (directoryPatients.length ? directoryPatients : patients).filter((patient) => patient.kind !== "Former Patient"),
     [directoryPatients, patients]
   );
   const billingPatients = useMemo(
@@ -2219,6 +2810,9 @@ export default function App() {
     return (
       <PatientPage
         patient={patient}
+        patientOptions={patients}
+        currentUserEmail={activeUserEmail}
+        counselorOptions={counselorAssignmentOptions}
         allSessions={sessions}
         dataClient={dataClient}
         hasAssignment={Boolean(caseAssignments[patient.id] || caseAssignmentEmails[patient.id])}
@@ -2239,26 +2833,28 @@ export default function App() {
         onClearAssignment={() => void clearCaseAssignment(patient.id)}
         onUpdateCompliance={(patch) => updateCompliance(patient.id, patch)}
         onUpdateRosterDetails={(patch) => updateRosterDetails(patient.id, patch)}
-        onUpdatePatient={(next) => {
-          setPatients((prev) => prev.map((x) => (x.id === next.id ? next : x)));
-          setPatientDetail((current) => (current && current.id === next.id ? next : current));
-        }}
+            onUpdatePatient={(next) => {
+              const normalizedNextId = normalizePatientId(next.id);
+              setPatients((prev) => prev.map((x) => (normalizePatientId(x.id) === normalizedNextId ? { ...x, ...next, id: x.id } : x)));
+              setPatientDetail((current) => (current && normalizePatientId(current.id) === normalizedNextId ? { ...current, ...next, id: current.id } : current));
+            }}
         onDeletePatient={() => {
           setPatients((prev) => prev.filter((x) => x.id !== patient.id));
           setPatientDetail(null);
-          setRoute({ name: "home" });
+          goHome();
         }}
         canManageAssignment={canManageAssignments}
         canDeletePatient={hasAdminRole}
-        canHighlightPatient={hasAdminRole}
-        onSendHighlight={async ({ message, priority }) =>
+        canHighlightPatient={Boolean(activeAuthUser)}
+        onSendHighlight={async ({ patientId, message, priority, recipientEmail }) =>
           sendPatientHighlight({
-            patientId: patient.id,
+            patientId,
             message,
             priority,
+            recipientEmail,
           })
         }
-        unreadHighlightNote={unreadPatientNotificationMap[patient.id]}
+        unreadHighlightNote={unreadPatientNotificationMap[normalizePatientId(patient.id)]}
         onMarkHighlightRead={() => dismissPatientHighlights(patient.id)}
         onReplyToHighlight={async (notificationId, message) => {
           await dataClient.replyToNotification(notificationId, { message });
@@ -2288,7 +2884,7 @@ export default function App() {
   const dashboardMetrics = useMemo(() => {
     let nextDueReviewDays: number | null = null;
     const dueReview = dashboardScopePatients.filter((patient) => {
-      const due = getProblemListDueDates(complianceByPatient[patient.id]);
+      const due = getProblemListDueDates(complianceByPatient[patient.id], patient);
       if (!due?.nextReview) return false;
       const daysUntilReview = dayDiff(currentWeek, due.nextReview);
       if (daysUntilReview < 0 || daysUntilReview > 7) return false;
@@ -2299,7 +2895,7 @@ export default function App() {
     }).length;
 
     const dueUpdate = dashboardScopePatients.filter((patient) => {
-      const due = getProblemListDueDates(complianceByPatient[patient.id]);
+      const due = getProblemListDueDates(complianceByPatient[patient.id], patient);
       if (!due) return false;
       const daysUntilUpdate = dayDiff(currentWeek, due.nextUpdate);
       return daysUntilUpdate >= 0 && daysUntilUpdate <= 14;
@@ -2443,6 +3039,24 @@ export default function App() {
     return next;
   }, [notifications, activeUserEmail, activeUserId, autoWorkflowHighlightMap]);
   const highlightedNotes = hasAdminRole ? adminInboxNotes : counselorSpotlightNotes;
+  const highlightThreads = useMemo(
+    () => buildHighlightThreads(notifications, patients, activeUserEmail, activeUserId),
+    [notifications, patients, activeUserEmail, activeUserId]
+  );
+  const hasUnreadHighlights = highlightThreads.some((thread) => thread.unreadForMe);
+
+  const showPastPatients = () => {
+    setWorkspaceTab("roster");
+    setKindFilter("Former Patient");
+    setForceRoster(true);
+    setCaseLoadOnly(false);
+    setSearch("");
+    setDashboardFilter(null);
+    setDesktopDropdownOpen(null);
+    setMobileGlanceOpen(false);
+    setMobileSearchOpen(false);
+    setMobileMenuOpen(false);
+  };
 
   const applyDashboardFilter = (filter: DashboardFilterKey) => {
     setDashboardFilter((current) => current === filter ? null : filter);
@@ -2456,7 +3070,24 @@ export default function App() {
     if (!selectedId || !results.some((p) => p.id === selectedId)) setSelectedId(results[0].id);
   }, [results, selectedId]);
 
-  const openPatient = (id: string) => setRoute({ name: "patient", patientId: normalizePatientId(id) });
+  const goHome = () => {
+    setSearch("");
+    setDashboardFilter(null);
+    setMobileMenuOpen(false);
+    setMobileGlanceOpen(false);
+    setMobileSearchOpen(false);
+    setDesktopDropdownOpen(null);
+    setRoute({ name: "home" });
+  };
+
+  const openPatient = (id: string) => {
+    setSearch("");
+    setMobileMenuOpen(false);
+    setMobileGlanceOpen(false);
+    setMobileSearchOpen(false);
+    setDesktopDropdownOpen(null);
+    setRoute({ name: "patient", patientId: normalizePatientId(id) });
+  };
 
   const openGroupPdf = async (groupSessionId: string) => {
     setOpeningGroupId(groupSessionId);
@@ -2599,11 +3230,18 @@ export default function App() {
       return;
     }
     setAzureDemoSession(null);
-    setRoute({ name: "home" });
+    goHome();
     setSearch("");
     setForceRoster(false);
     setCaseLoadOnly(true);
     setPrivacyLocked(true);
+  };
+
+  const unlockWorkspace = () => {
+    setMobileMenuOpen(false);
+    setMobileGlanceOpen(false);
+    setMobileSearchOpen(false);
+    setPrivacyLocked(false);
   };
 
   useEffect(() => {
@@ -2800,11 +3438,19 @@ export default function App() {
     });
   };
 
-  const updateCompliance = async (patientId: string, patch: Partial<PatientCompliance>) => {
+  const updateCompliance = async (patientId: string, patch: CompliancePatch) => {
+    const normalizedPatientId = normalizePatientId(patientId);
     const normalizedPatch = { ...patch };
+    const resetProblemListCycle = Boolean(normalizedPatch.resetProblemListCycle);
+    delete normalizedPatch.resetProblemListCycle;
     if (normalizedPatch.treatmentPlanCycleDays != null) {
       normalizedPatch.treatmentPlanCycleDays = normalizedPatch.treatmentPlanCycleDays === 180 ? 180 : 90;
-      setStoredTreatmentPlanCycleDays(patientId, normalizedPatch.treatmentPlanCycleDays);
+      setStoredTreatmentPlanCycleDays(normalizedPatientId, normalizedPatch.treatmentPlanCycleDays);
+    }
+    if (resetProblemListCycle) {
+      normalizedPatch.problemListDate = undefined;
+      normalizedPatch.lastProblemListReview = undefined;
+      normalizedPatch.lastProblemListUpdate = undefined;
     }
     // Completing an update resets the corresponding original anchor date.
     if (normalizedPatch.lastProblemListUpdate && !normalizedPatch.problemListDate) {
@@ -2813,7 +3459,7 @@ export default function App() {
     if (normalizedPatch.lastTreatmentPlanUpdate && !normalizedPatch.treatmentPlanDate) {
       normalizedPatch.treatmentPlanDate = normalizedPatch.lastTreatmentPlanUpdate;
     }
-    const previous = complianceByPatient[patientId] ?? {};
+    const previous = complianceByPatient[normalizedPatientId] ?? complianceByPatient[patientId] ?? {};
     // If the problem list anchor date changes, start a fresh 30/60 review cycle unless caller explicitly sets review.
     if (
       normalizedPatch.problemListDate &&
@@ -2831,9 +3477,9 @@ export default function App() {
       normalizedPatch.lastTreatmentPlanUpdate = undefined;
     }
     const next = normalizeComplianceDates({ ...previous, ...normalizedPatch });
-    setComplianceByPatient((prev) => ({ ...prev, [patientId]: next }));
+    setComplianceByPatient((prev) => ({ ...prev, [normalizedPatientId]: next }));
     const payload = {
-      patient_id: patientId,
+      patient_id: normalizedPatientId,
       drug_test_mode: next.drugTestMode ?? "none",
       drug_tests_per_week: next.drugTestMode === "weekly_count" ? next.drugTestsPerWeek ?? 1 : null,
       drug_test_weekday: next.drugTestMode === "weekday" && next.drugTestWeekday != null ? Number(next.drugTestWeekday) : null,
@@ -2845,7 +3491,7 @@ export default function App() {
       updated_by: activeUserId || null,
     };
     try {
-      const saved = await dataClient.saveCompliance(patientId, payload) as any;
+      const saved = await dataClient.saveCompliance(normalizedPatientId, payload) as any;
       if (saved && typeof saved === "object") {
         const canonical: PatientCompliance = normalizeComplianceDates({
           drugTestMode: saved.drug_test_mode ?? next.drugTestMode ?? "none",
@@ -2858,7 +3504,7 @@ export default function App() {
           lastTreatmentPlanUpdate: saved.treatment_plan_update ?? next.lastTreatmentPlanUpdate ?? undefined,
           treatmentPlanCycleDays: next.treatmentPlanCycleDays ?? previous.treatmentPlanCycleDays ?? 90,
         });
-        setComplianceByPatient((prev) => ({ ...prev, [patientId]: canonical }));
+        setComplianceByPatient((prev) => ({ ...prev, [normalizedPatientId]: canonical }));
         const changedReview = Boolean(canonical.lastProblemListReview && canonical.lastProblemListReview !== previous.lastProblemListReview);
         const changedUpdate = Boolean(canonical.lastProblemListUpdate && canonical.lastProblemListUpdate !== previous.lastProblemListUpdate);
         const changedTxUpdate = Boolean(canonical.lastTreatmentPlanUpdate && canonical.lastTreatmentPlanUpdate !== previous.lastTreatmentPlanUpdate);
@@ -2872,7 +3518,7 @@ export default function App() {
         if (changedTxDate && !changedTxUpdate) autoBilling.push({ when: canonical.treatmentPlanDate as string, kind: "Treatment Plan" });
         for (const entry of autoBilling) {
           await commitPatientBilling({
-            patientId,
+            patientId: normalizedPatientId,
             billingType: entry.kind,
             serviceDate: entry.when,
             startTime: "09:00",
@@ -2885,6 +3531,7 @@ export default function App() {
         }
       }
     } catch (error) {
+      setComplianceByPatient((prev) => ({ ...prev, [normalizedPatientId]: previous }));
       console.error("Unable to persist compliance update:", error);
       window.alert("Could not save compliance date update. Please try again.");
     }
@@ -2951,13 +3598,12 @@ export default function App() {
     patientId: string;
     message: string;
     priority: "normal" | "urgent";
+    recipientEmail?: string;
   }) => {
-    const assignedEmail =
-      caseAssignmentEmails[payload.patientId] ??
-      (caseAssignments[payload.patientId]?.includes("@") ? caseAssignments[payload.patientId] : "");
+    const assignedEmail = payload.recipientEmail?.trim().toLowerCase() || "";
 
     if (!assignedEmail) {
-      window.alert("This patient does not have an assigned counselor email yet. Assign the case first, then send a highlight note.");
+      window.alert("Choose a recipient before sending a highlight.");
       return false;
     }
 
@@ -3028,80 +3674,34 @@ export default function App() {
     }
   };
 
+  const markHighlightThreadRead = async (notificationId: string) => {
+    const root = notifications.find((note) => note.id === notificationId);
+    if (!root) return;
+    const threadId = root.threadId ?? root.id;
+    const targetIds = notifications
+      .filter((note) => (note.threadId ?? note.id) === threadId && !note.readAt)
+      .map((note) => note.id);
+    if (!targetIds.length) return;
+    const snapshot = notifications;
+    const now = new Date().toISOString();
+    const targetSet = new Set(targetIds);
+    setNotifications((prev) => {
+      const next = prev.map((note) => (targetSet.has(note.id) ? { ...note, readAt: note.readAt ?? now } : note));
+      setHighlightedPatientIds(buildHighlightMap(next));
+      return next;
+    });
+    try {
+      await Promise.all(targetIds.map((id) => dataClient.markNotificationRead(id)));
+    } catch (error) {
+      setNotifications(snapshot);
+      setHighlightedPatientIds(buildHighlightMap(snapshot));
+      throw error;
+    }
+  };
+
   const replyToNotification = async (notificationId: string, message: string) => {
     await dataClient.replyToNotification(notificationId, { message });
     await dismissNotification(notificationId);
-  };
-
-  const exportRosterSpreadsheet = () => {
-    const headers = [
-      "Client's Name",
-      "Sage ID",
-      "LOC + DOC",
-      "Admit Date",
-      "Problem List",
-      "Problem List Review 30",
-      "Problem List Update 90",
-      "Treatment Plan",
-      "Treatment Plan Update 180",
-      "Medical / Phys Apt.",
-      "Med Form",
-      "Referring Agency",
-      "Reauth SAP-C Date",
-      "Medical Eligibility",
-      "MAT",
-      "Therapy",
-      "Notes",
-    ];
-
-    const body = results
-      .map((patient) => {
-        const row = getSheetRowData(patient, complianceByPatient[patient.id]);
-        return [
-          row.clientName,
-          row.sageId,
-          row.locDocBubble,
-          row.admitDate,
-          row.problemListInitial,
-          row.problemListReview,
-          row.problemListUpdate,
-          row.treatmentPlanInitial,
-          row.treatmentPlanUpdate,
-          row.medicalPhysApt,
-          row.medForm,
-          row.referringAgency,
-          row.reauthSapcDate,
-          row.medicalEligibility,
-          row.matStatus,
-          row.therapyTrack,
-          row.notes,
-        ];
-      })
-      .map(
-        (cells) =>
-          `<tr>${cells.map((cell) => `<td>${String(cell ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</td>`).join("")}</tr>`
-      )
-      .join("");
-
-    const html = `
-      <html>
-        <head><meta charset="utf-8" /></head>
-        <body>
-          <table>
-            <thead><tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr></thead>
-            <tbody>${body}</tbody>
-          </table>
-        </body>
-      </html>
-    `;
-
-    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `patientfinder-roster-${todayIso()}.xls`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   const addPatientDrugTest = async (patientId: string, entry: Omit<DrugTestEntry, "id">) => {
@@ -3197,129 +3797,6 @@ export default function App() {
     return { ok: true, message: `Committed ${billingType.toLowerCase()} to billing.` };
   };
 
-  const backfillComplianceSessionsLastWeek = async () => {
-    if (complianceBackfillBusy) return;
-    setComplianceBackfillBusy(true);
-    try {
-      const today = todayIso();
-      const windowStart = addDaysIso(today, -7);
-      const existing = new Set(
-        billingEntries.map((entry) => `${normalizePatientId(entry.patientId)}|${entry.billingType}|${entry.serviceDate}`)
-      );
-      const planned: Array<{ patientId: string; date: string; billingType: BillingType }> = [];
-      let skippedExisting = 0;
-      let totalCandidates = 0;
-      const pushIfMissing = (patientId: string, date: string | undefined, billingType: BillingType) => {
-        const normalizedDate = toDateOnly(date);
-        if (!normalizedDate) return;
-        if (normalizedDate < windowStart || normalizedDate > today) return;
-        totalCandidates += 1;
-        const key = `${normalizePatientId(patientId)}|${billingType}|${normalizedDate}`;
-        if (existing.has(key)) {
-          skippedExisting += 1;
-          return;
-        }
-        existing.add(key);
-        planned.push({ patientId, date: normalizedDate, billingType });
-      };
-
-      patients.forEach((patient) => {
-        const compliance = complianceByPatient[normalizePatientId(patient.id)] ?? complianceByPatient[patient.id];
-        if (!compliance) return;
-        pushIfMissing(patient.id, compliance.problemListDate, "Problem List");
-        pushIfMissing(patient.id, compliance.lastProblemListReview, "Problem List Review");
-        pushIfMissing(patient.id, compliance.lastProblemListUpdate, "Problem List Update");
-        pushIfMissing(patient.id, compliance.treatmentPlanDate, "Treatment Plan");
-        pushIfMissing(patient.id, compliance.lastTreatmentPlanUpdate, "Treatment Plan Update");
-      });
-
-      let created = 0;
-      let failed = 0;
-      for (const item of planned) {
-        try {
-          await commitPatientBilling({
-            patientId: item.patientId,
-            billingType: item.billingType,
-            serviceDate: item.date,
-            startTime: "09:00",
-            endTime: "10:00",
-            totalMinutes: 60,
-            modality: "FF",
-            naloxoneTraining: false,
-            matEducation: false,
-          });
-          created += 1;
-        } catch {
-          failed += 1;
-        }
-      }
-      window.alert(
-        `Backfill complete.\nWindow: ${windowStart} to ${today}\nFound: ${totalCandidates}\nCreated: ${created}\nSkipped existing: ${skippedExisting}\nFailed: ${failed}`
-      );
-    } finally {
-      setComplianceBackfillBusy(false);
-    }
-  };
-  const handleJsonUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setJsonImporting(true);
-    try {
-      const text = await file.text();
-      const rows = JSON.parse(text);
-      if (!Array.isArray(rows)) throw new Error('JSON must be a top-level array of patient objects.');
-      const now = new Date().toISOString();
-      const today = now.substring(0, 10);
-      const skippedRows: number[] = [];
-      const records = rows
-        .map((r: any, index: number) => {
-          const fullName = resolveImportedPatientName(r);
-          const mrn = firstNonEmptyString(r?.mrn, r?.sage_id, r?.sageId) || null;
-          const externalId = firstNonEmptyString(r?.external_id, r?.externalId, r?.client_id, r?.clientId) || null;
-          if (!fullName && !mrn && !externalId) {
-            skippedRows.push(index + 1);
-            return null;
-          }
-          return {
-            id: resolveImportedPatientId(r),
-            full_name: fullName || `MRN ${mrn ?? externalId ?? index + 1}`,
-            mrn,
-            external_id: externalId,
-            date_of_birth: normalizeImportDate(r?.date_of_birth ?? r?.dateOfBirth ?? r?.dob ?? r?.birth_date),
-            status: firstNonEmptyString(r?.status, r?.patient_status) || 'new',
-            location: firstNonEmptyString(r?.location, r?.site, r?.clinic) || null,
-            intake_date: normalizeImportDate(r?.intake_date ?? r?.intakeDate ?? r?.admit_date ?? r?.admitDate, today),
-            primary_program: firstNonEmptyString(r?.primary_program, r?.primaryProgram, r?.program) || null,
-            counselor_name: firstNonEmptyString(r?.counselor_name, r?.counselorName, r?.counselor) || null,
-            flags: Array.isArray(r?.flags) ? r.flags : [],
-            last_visit_date: normalizeImportDate(r?.last_visit_date ?? r?.lastVisitDate),
-            next_appt_date: normalizeImportDate(r?.next_appt_date ?? r?.nextApptDate ?? r?.next_appointment_date),
-            created_at: now,
-            updated_at: now,
-          };
-        })
-        .filter((record): record is NonNullable<typeof record> => Boolean(record));
-      if (!records.length) {
-        throw new Error("No valid patient rows found. Expected at least a name, MRN, or external ID per row.");
-      }
-      await dataClient.bulkUpsertPatients({ records });
-      await refreshPatients();
-      if (skippedRows.length) {
-        alert(
-          `✓ Imported ${records.length} patient${records.length === 1 ? '' : 's'}.\n` +
-          `Skipped ${skippedRows.length} row${skippedRows.length === 1 ? '' : 's'} with no usable identity fields.`
-        );
-      } else {
-        alert(`✓ Imported ${records.length} patient${records.length === 1 ? '' : 's'}.`);
-      }
-    } catch (err) {
-      alert('Import failed: ' + String(err));
-    }
-    setJsonImporting(false);
-    e.target.value = '';
-  };
-
-
   if (publicGroupToken) {
     return <PublicGroupSignPage token={publicGroupToken} dataClient={dataClient} />;
   }
@@ -3355,19 +3832,33 @@ export default function App() {
               </button>
 
               <button
-                className={desktopMenuOpen ? "workspaceActionBtn primary workspaceSidebarMenuToggle" : "workspaceActionBtn workspaceSidebarMenuToggle"}
+                className={
+                  desktopMenuOpen
+                    ? "workspaceActionBtn primary workspaceSidebarMenuToggle"
+                    : hasUnreadHighlights
+                      ? "workspaceActionBtn workspaceSidebarMenuToggle hasNotification"
+                      : "workspaceActionBtn workspaceSidebarMenuToggle"
+                }
                 onClick={() => setDesktopMenuOpen((open) => !open)}
               >
                 {desktopMenuOpen ? "Close menu" : "Menu"}
+                {hasUnreadHighlights ? <span className="menuNotificationDot" aria-hidden="true" /> : null}
               </button>
 
               {desktopMenuOpen ? (
                 <>
                   <div className="workspaceSidebarSection">
-                <button
-                  className={!forceRoster && caseLoadOnly ? "workspaceActionBtn primary" : "workspaceActionBtn"}
+                    <button
+                      className={hasUnreadHighlights ? "workspaceActionBtn workspaceActionBtnGlow" : "workspaceActionBtn"}
+                      onClick={() => setShowNotificationComposer(true)}
+                    >
+                      Highlights
+                    </button>
+                    <button
+                      className={!forceRoster && caseLoadOnly ? "workspaceActionBtn primary" : "workspaceActionBtn"}
                       onClick={() => {
                         setWorkspaceTab("roster");
+                        setKindFilter("all");
                         setCaseLoadOnly(true);
                         setForceRoster(false);
                         setSearch("");
@@ -3380,6 +3871,7 @@ export default function App() {
                         className={forceRoster ? "workspaceActionBtn primary" : "workspaceActionBtn"}
                         onClick={() => {
                           setWorkspaceTab("roster");
+                          setKindFilter("all");
                           setForceRoster(true);
                           setCaseLoadOnly(false);
                           setSearch("");
@@ -3388,6 +3880,12 @@ export default function App() {
                         Full roster
                       </button>
                     ) : null}
+                    <button
+                      className={kindFilter === "Former Patient" ? "workspaceActionBtn primary" : "workspaceActionBtn"}
+                      onClick={showPastPatients}
+                    >
+                      Past patients
+                    </button>
                     <button className="workspaceActionBtn" onClick={() => setRoute({ name: "attendance" })}>
                       Visits & tests
                     </button>
@@ -3400,33 +3898,17 @@ export default function App() {
                     <button className="workspaceActionBtn" onClick={() => setRoute({ name: "mobile" })}>
                       Mobile
                     </button>
+                    {hasAdminRole ? (
+                      <button className="workspaceActionBtn" onClick={() => setRoute({ name: "patientbridge" })}>
+                        patientbridge
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="workspaceSidebarSection">
                     {canManagePatients ? (
                       <button className="workspaceActionBtn" onClick={() => setShowAddPatient(true)}>
                         Add patient
-                      </button>
-                    ) : null}
-                    <button className="workspaceActionBtn" onClick={exportRosterSpreadsheet}>
-                      Export roster spreadsheet
-                    </button>
-                    <button
-                      className="workspaceActionBtn"
-                      onClick={() => void backfillComplianceSessionsLastWeek()}
-                      disabled={complianceBackfillBusy}
-                    >
-                      {complianceBackfillBusy ? "Backfilling..." : "Backfill last 7 days"}
-                    </button>
-                    {canManagePatients ? (
-                      <label className={`workspaceActionBtn upload${jsonImporting ? " disabled" : ""}`}>
-                        {jsonImporting ? "Importing JSON..." : "Import patient JSON"}
-                        <input type="file" accept=".json" hidden onChange={handleJsonUpload} disabled={jsonImporting} />
-                      </label>
-                    ) : null}
-                    {hasAdminRole ? (
-                      <button className="workspaceActionBtn" onClick={() => setShowNotificationComposer(true)}>
-                        Send counselor note
                       </button>
                     ) : null}
                     <button className="workspaceActionBtn" onClick={logout}>
@@ -3441,60 +3923,114 @@ export default function App() {
           <main className={!isMobileWorkspace && privacyLocked ? "workspaceMain desktopLocked" : "workspaceMain"}>
             {isMobileWorkspace ? (
               <section className="workspaceMobileHero">
-                <button className={privacyLocked ? "workspaceMobileBrand locked" : "workspaceMobileBrand unlocked"} onClick={() => setPrivacyLocked(true)}>
-                  <img className="workspaceMobileLogo" src={patientFinderLogo} alt="patientfinder logo" />
+                {!privacyLocked ? (
+                  <button
+                    className={
+                      mobileMenuOpen
+                        ? "btn ghost active workspaceMobileMenuBtn workspaceMobileHeroMenuToggle"
+                        : hasUnreadHighlights
+                          ? "btn ghost workspaceMobileMenuBtn workspaceMobileHeroMenuToggle hasNotification"
+                          : "btn ghost workspaceMobileMenuBtn workspaceMobileHeroMenuToggle"
+                    }
+                    onClick={() => {
+                      setMobileMenuOpen((open) => !open);
+                      setMobileGlanceOpen(false);
+                      setMobileSearchOpen(false);
+                    }}
+                    title="Menu"
+                    aria-label="Menu"
+                  >
+                    <span aria-hidden="true">
+                      <MobileMenuIcon />
+                    </span>
+                    {hasUnreadHighlights ? <span className="menuNotificationDot" aria-hidden="true" /> : null}
+                  </button>
+                ) : null}
+
+                {!privacyLocked ? (
+                  <button
+                    className={mobileGlanceOpen ? "btn ghost active workspaceMobileHeroGlanceToggle" : "btn ghost workspaceMobileHeroGlanceToggle"}
+                    onClick={() => {
+                      setMobileGlanceOpen((open) => !open);
+                      setMobileMenuOpen(false);
+                      setMobileSearchOpen(false);
+                    }}
+                    title="At a glance"
+                    aria-label="At a glance"
+                  >
+                    <span aria-hidden="true">
+                      <MobileGlanceIcon />
+                    </span>
+                  </button>
+                ) : null}
+
+                <button
+                  className="workspaceMobileBrandLink"
+                  onClick={() => setPrivacyLocked(true)}
+                  aria-label="patientfinder logo"
+                >
+                  <img className="workspaceMobileLogo workspaceMobileLogoOnly" src={themeButtonLogo} alt="" />
                 </button>
 
-                <div className="workspaceMobileStatusRow">
-                </div>
-
                 {!privacyLocked ? (
-                  <div className="workspaceMobileTopSub">
-                    {results.length} visible • {patientPageStart}-{patientPageEnd} of {patientTotal}
+                  <div className="workspaceMobileHeroSearchRow">
+                    <input
+                      ref={desktopSearchInputRef}
+                      className="workspaceSearch workspaceMobileSearchInput"
+                      value={search}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSearch(v);
+                        if (v.trim().length) {
+                          setForceRoster(false);
+                          setCaseLoadOnly(false);
+                        }
+                      }}
+                      placeholder={mobileSearchPlaceholder}
+                    />
+                    <button
+                      className={view === "sheet" ? "btn ghost active workspaceMobileHeroIconBtn" : "btn ghost workspaceMobileHeroIconBtn"}
+                      onClick={() => setView((current) => (current === "sheet" ? "cards" : "sheet"))}
+                      title={view === "sheet" ? "Sheet view" : "iPhone view"}
+                      aria-label={view === "sheet" ? "Sheet view" : "iPhone view"}
+                    >
+                      <span aria-hidden="true">
+                        <MobileLayoutIcon cards={view !== "sheet"} />
+                      </span>
+                    </button>
+                    <div className="dropdownAnchor workspaceMobileHeroSortAnchor" ref={desktopSortDropdownRef}>
+                      <button
+                        className={desktopDropdownOpen === "sort" ? "btn ghost active workspaceMobileHeroIconBtn" : "btn ghost workspaceMobileHeroIconBtn"}
+                        onClick={() => setDesktopDropdownOpen((current) => (current === "sort" ? null : "sort"))}
+                        title={`Sort by: ${sortKey}`}
+                        aria-label={`Sort by: ${sortKey}`}
+                      >
+                        <span aria-hidden="true">
+                          <MobileSortIcon />
+                        </span>
+                      </button>
+                      {desktopDropdownOpen === "sort" ? (
+                        <div className="diamondMenu workspaceMobileSortMenu">
+                          <button className="diamondMenuItem" onClick={() => { setSortDir((d) => (d === "asc" ? "desc" : "asc")); setDesktopDropdownOpen(null); }}>
+                            Direction: {sortDir === "asc" ? "Ascending" : "Descending"}
+                          </button>
+                          <button className={sortKey === "name" ? "diamondMenuItem on" : "diamondMenuItem"} onClick={() => { setSortKey("name"); setDesktopDropdownOpen(null); }}>Sort by name</button>
+                          <button className={sortKey === "intake" ? "diamondMenuItem on" : "diamondMenuItem"} onClick={() => { setSortKey("intake"); setDesktopDropdownOpen(null); }}>Sort by intake date</button>
+                          <button className={sortKey === "lastVisit" ? "diamondMenuItem on" : "diamondMenuItem"} onClick={() => { setSortKey("lastVisit"); setDesktopDropdownOpen(null); }}>Sort by last visit</button>
+                          <button className={sortKey === "kind" ? "diamondMenuItem on" : "diamondMenuItem"} onClick={() => { setSortKey("kind"); setDesktopDropdownOpen(null); }}>Sort by status</button>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
 
-                {!privacyLocked ? (
-                  <div className="workspaceMobileHeroActions">
-                    <button
-                      className={mobileGlanceOpen ? "btn ghost active" : "btn ghost"}
-                      onClick={() => {
-                        setMobileGlanceOpen((open) => !open);
-                        setMobileMenuOpen(false);
-                        setMobileSearchOpen(false);
-                      }}
-                    >
-                      At a glance
-                    </button>
-                    <button
-                      className={mobileSearchOpen ? "btn ghost active" : "btn ghost"}
-                      onClick={() => {
-                        setMobileSearchOpen((open) => !open);
-                        setMobileMenuOpen(false);
-                        setMobileGlanceOpen(false);
-                      }}
-                    >
-                      Search & organize
-                    </button>
-                    <button
-                      className={mobileMenuOpen ? "btn ghost active workspaceMobileMenuBtn" : "btn ghost workspaceMobileMenuBtn"}
-                      onClick={() => {
-                        setMobileMenuOpen((open) => !open);
-                        setMobileGlanceOpen(false);
-                        setMobileSearchOpen(false);
-                      }}
-                    >
-                      {mobileMenuOpen ? "Close menu" : "Menu"}
-                    </button>
-                  </div>
-                ) : null}
               </section>
             ) : null}
             {privacyLocked ? (
               isMobileWorkspace ? (
                 <div className="workspacePrivacyStage">
                   <div className="workspacePrivacyCard">
-                    <button className="btn" onClick={() => setPrivacyLocked(false)}>
+                    <button className="btn" onClick={unlockWorkspace}>
                       Unlock workspace
                     </button>
                   </div>
@@ -3509,10 +4045,10 @@ export default function App() {
                 </div>
               ) : (
                 <div className="workspaceDesktopLockStage">
-                  <button className="workspaceBrand hero locked" onClick={() => setPrivacyLocked(false)}>
+                  <button className="workspaceBrand hero locked" onClick={unlockWorkspace}>
                     <img className="workspaceLogo hero locked" src={patientFinderLogo} alt="patientfinder logo" />
                   </button>
-                  <button className="workspaceUnlockBtn" onClick={() => setPrivacyLocked(false)}>
+                  <button className="workspaceUnlockBtn" onClick={unlockWorkspace}>
                     Unlock
                   </button>
                   <div className="workspaceLockJokeStage desktop">
@@ -3531,9 +4067,19 @@ export default function App() {
                   <section className="workspaceMobileMenuCard">
                     <div className="workspaceMobileMenuGrid">
                       <button
+                        className={hasUnreadHighlights ? "workspaceActionBtn workspaceActionBtnGlow" : "workspaceActionBtn"}
+                        onClick={() => {
+                          setShowNotificationComposer(true);
+                          setMobileMenuOpen(false);
+                        }}
+                      >
+                        Highlights
+                      </button>
+                      <button
                         className={!forceRoster && caseLoadOnly ? "workspaceActionBtn primary" : "workspaceActionBtn"}
                         onClick={() => {
                           setWorkspaceTab("roster");
+                          setKindFilter("all");
                           setCaseLoadOnly(true);
                           setForceRoster(false);
                           setSearch("");
@@ -3547,6 +4093,7 @@ export default function App() {
                           className={forceRoster ? "workspaceActionBtn primary" : "workspaceActionBtn"}
                           onClick={() => {
                             setWorkspaceTab("roster");
+                            setKindFilter("all");
                             setForceRoster(true);
                             setCaseLoadOnly(false);
                             setSearch("");
@@ -3557,36 +4104,13 @@ export default function App() {
                         </button>
                       ) : null}
                       <button
-                        className={mobileGlanceOpen ? "workspaceActionBtn primary" : "workspaceActionBtn"}
+                        className="workspaceActionBtn"
                         onClick={() => {
-                          setWorkspaceTab("roster");
-                          setMobileGlanceOpen((open) => !open);
-                          setMobileSearchOpen(false);
+                          setRoute({ name: "groups" });
                           setMobileMenuOpen(false);
                         }}
                       >
-                        At a glance
-                      </button>
-                      {canManagePatients ? (
-                        <button
-                          className="workspaceActionBtn"
-                          onClick={() => {
-                            setShowAddPatient(true);
-                            setMobileMenuOpen(false);
-                          }}
-                        >
-                          Add patient
-                        </button>
-                      ) : null}
-                      <button className="workspaceActionBtn" onClick={exportRosterSpreadsheet}>
-                        Export roster
-                      </button>
-                      <button
-                        className="workspaceActionBtn"
-                        onClick={() => void backfillComplianceSessionsLastWeek()}
-                        disabled={complianceBackfillBusy}
-                      >
-                        {complianceBackfillBusy ? "Backfilling..." : "Backfill last 7 days"}
+                        Groups
                       </button>
                       <button
                         className="workspaceActionBtn"
@@ -3607,14 +4131,22 @@ export default function App() {
                         Billing
                       </button>
                       <button
-                        className="workspaceActionBtn"
-                        onClick={() => {
-                          setRoute({ name: "groups" });
-                          setMobileMenuOpen(false);
-                        }}
+                        className={kindFilter === "Former Patient" ? "workspaceActionBtn primary" : "workspaceActionBtn"}
+                        onClick={showPastPatients}
                       >
-                        Groups
+                        Past patients
                       </button>
+                      {canManagePatients ? (
+                        <button
+                          className="workspaceActionBtn"
+                          onClick={() => {
+                            setShowAddPatient(true);
+                            setMobileMenuOpen(false);
+                          }}
+                        >
+                          Add patient
+                        </button>
+                      ) : null}
                       <button
                         className="workspaceActionBtn"
                         onClick={() => {
@@ -3628,11 +4160,11 @@ export default function App() {
                         <button
                           className="workspaceActionBtn"
                           onClick={() => {
-                            setShowNotificationComposer(true);
+                            setRoute({ name: "patientbridge" });
                             setMobileMenuOpen(false);
                           }}
                         >
-                          Send counselor note
+                          patientbridge
                         </button>
                       ) : null}
                       <button className="workspaceActionBtn" onClick={logout}>
@@ -3761,28 +4293,17 @@ export default function App() {
                           ) : null}
                         </div>
 
-                        <div className={!isMobileWorkspace ? "workspaceFilterRow workspaceFilterRowRight" : "workspaceFilterRow"}>
+                        <div className={!isMobileWorkspace ? "workspaceFilterRow workspaceFilterRowRight" : "workspaceFilterRow workspaceFilterRowRight workspaceMobileFilterRow"}>
                           {!isMobileWorkspace ? (
                             <>
-                              <div className="seg">
-                                <button className={view === "sheet" ? "segBtn on" : "segBtn"} onClick={() => setView("sheet")} title="Sheet view" aria-label="Sheet view">
-                                  Sheet
-                                </button>
-                                <button className={view === "split" ? "segBtn on" : "segBtn"} onClick={() => setView("split")} title="Focus view" aria-label="Focus view">
-                                  Focus
-                                </button>
-                                <button className={view === "cards" ? "segBtn on" : "segBtn"} onClick={() => setView("cards")} title="Cards view" aria-label="Cards view">
-                                  Cards
-                                </button>
-                              </div>
                               <div className="dropdownAnchor" ref={desktopStatusDropdownRef}>
                                 <button
-                                  className={`segBtn diamondCtrlBtn${desktopDropdownOpen === "status" ? " on" : ""}`}
+                                  className={desktopDropdownOpen === "status" ? "btn ghost workspaceGlanceBtn active" : "btn ghost workspaceGlanceBtn"}
                                   onClick={() => setDesktopDropdownOpen((current) => (current === "status" ? null : "status"))}
                                   title={`Status: ${kindFilter}`}
                                   aria-label={`Status: ${kindFilter}`}
                                 >
-                                  <span className="diamondCtrlGlyph">Status</span>
+                                  <span className="diamondCtrlGlyph" aria-hidden="true"><StatusDiamondIcon /></span>
                                 </button>
                                 {desktopDropdownOpen === "status" ? (
                                   <div className="diamondMenu">
@@ -3800,12 +4321,12 @@ export default function App() {
 
                               <div className="dropdownAnchor" ref={desktopSortDropdownRef}>
                                 <button
-                                  className={`segBtn diamondCtrlBtn${desktopDropdownOpen === "sort" ? " on" : ""}`}
+                                  className={desktopDropdownOpen === "sort" ? "btn ghost workspaceGlanceBtn active" : "btn ghost workspaceGlanceBtn"}
                                   onClick={() => setDesktopDropdownOpen((current) => (current === "sort" ? null : "sort"))}
                                   title={`Sort by: ${sortKey}`}
                                   aria-label={`Sort by: ${sortKey}`}
                                 >
-                                  <span className="diamondCtrlGlyph">Sort</span>
+                                  <span className="diamondCtrlGlyph" aria-hidden="true"><SortDiamondIcon /></span>
                                 </button>
                                 {desktopDropdownOpen === "sort" ? (
                                   <div className="diamondMenu">
@@ -3819,45 +4340,40 @@ export default function App() {
                                   </div>
                                 ) : null}
                               </div>
+                              <div className="workspaceViewDiamondGroup" aria-label="View mode">
+                                <button
+                                  className={view === "sheet" ? "btn ghost workspaceGlanceBtn active" : "btn ghost workspaceGlanceBtn"}
+                                  onClick={() => setView("sheet")}
+                                  title="Sheet view"
+                                  aria-label="Sheet view"
+                                >
+                                  <span className="diamondCtrlGlyph" aria-hidden="true"><SheetDiamondIcon /></span>
+                                </button>
+                                <button
+                                  className={view === "cards" ? "btn ghost workspaceGlanceBtn active" : "btn ghost workspaceGlanceBtn"}
+                                  onClick={() => setView("cards")}
+                                  title="Cards view"
+                                  aria-label="Cards view"
+                                >
+                                  <span className="diamondCtrlGlyph" aria-hidden="true"><CardsDiamondIcon /></span>
+                                </button>
+                              </div>
+                              <div className="workspaceResultsCount">
+                                {results.length} visible • {patientPageStart}-{patientPageEnd} of {patientTotal}
+                              </div>
                               <button
                                 className={desktopGlanceOpen ? "btn ghost workspaceGlanceBtn active" : "btn ghost workspaceGlanceBtn"}
                                 onClick={() => setDesktopGlanceOpen((open) => !open)}
                                 title="At a glance"
                                 aria-label="At a glance"
                               >
-                                <span aria-hidden="true">◈</span> At a glance
+                                <span className="diamondCtrlGlyph" aria-hidden="true"><MobileGlanceIcon /></span>
                               </button>
                             </>
-                          ) : (
-                            <div className="seg workspaceMobileViewSeg">
-                              <button className={view === "cards" ? "segBtn on" : "segBtn"} onClick={() => setView("cards")}>
-                                iPhone
-                              </button>
-                              <button className={view === "sheet" ? "segBtn on" : "segBtn"} onClick={() => setView("sheet")}>
-                                Sheet
-                              </button>
-                            </div>
-                          )}
+                          ) : null}
 
                           {isMobileWorkspace ? (
                             <>
-                              <select className="select" value={kindFilter} onChange={(e) => setKindFilter(e.target.value as PatientKindFilter)}>
-                                <option value="all">All statuses</option>
-                                <option value="New Patient">New (0-20 days)</option>
-                                <option value="Current Patient">Current patients</option>
-                                <option value="RSS+">RSS+</option>
-                                <option value="RSS">RSS</option>
-                                <option value="Former Patient">Former patients</option>
-                                <option value="Former Recent">Former (0-90 days)</option>
-                                <option value="Former Archived">Former (90+ days)</option>
-                              </select>
-
-                              <select className="select" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
-                                <option value="name">Sort by name</option>
-                                <option value="intake">Sort by intake date</option>
-                                <option value="lastVisit">Sort by last visit</option>
-                                <option value="kind">Sort by status</option>
-                              </select>
                             </>
                           ) : null}
 
@@ -3867,15 +4383,17 @@ export default function App() {
                             </button>
                           ) : null}
 
-                          <div className="workspaceResultsCount">
-                            {results.length} visible • {patientPageStart}-{patientPageEnd} of {patientTotal}
-                          </div>
                         </div>
                         </div>
                       </div>
                     ) : null}
 
                     <div className="workspaceContentGrid singleColumn">
+                      {loadError ? (
+                        <div className="workspaceLoadError" role="status">
+                          {loadError}
+                        </div>
+                      ) : null}
                       <SearchResults
                         view={view}
                         rows={results}
@@ -3883,12 +4401,21 @@ export default function App() {
                         complianceByPatient={complianceByPatient}
                         caseAssignments={caseAssignments}
                         counselorId={counselorId}
-                        isMobile={isMobileWorkspace}
                         onUpdateCompliance={updateCompliance}
                         onUpdateRosterDetails={updateRosterDetails}
                         selectedId={selected?.id}
                         onSelect={setSelectedId}
                         onOpen={openPatient}
+                        onShiftHighlight={(patient) =>
+                          setHighlightTarget({
+                            patientId: patient.id,
+                            patientName: patient.displayName,
+                            recipientEmail:
+                              caseAssignmentEmails[patient.id] ??
+                              (caseAssignments[patient.id]?.includes("@") ? caseAssignments[patient.id] : "") ??
+                              "",
+                          })
+                        }
                         selected={selected}
                         isAdminView={hasAdminRole || counselorThinList}
                         highlightedPatientIds={highlightedPatientIds}
@@ -3927,7 +4454,10 @@ export default function App() {
                             <strong>{patient.displayName}</strong>
                             <div className="workspaceAgendaNoteActions">
                               <span className={`workspaceTone ${note.priority === "urgent" ? "behind" : "neutral"}`}>
-                                {hasAdminRole ? "Counselor reply" : "Admin note"}
+                                {(note.senderEmail ?? "").toLowerCase() === activeUserEmail.toLowerCase() ||
+                                (note.senderUserId ?? "").toLowerCase() === activeUserId
+                                  ? "Sent highlight"
+                                  : "Highlight"}
                               </span>
                               {!hasAdminRole ? (
                                 <button
@@ -3990,10 +4520,6 @@ export default function App() {
                     </div>
                   </section>
                 )}
-
-                <div className="homeFooter">
-                  {loadError ? loadError : ""}
-                </div>
               </>
             )}
           </main>
@@ -4031,16 +4557,34 @@ export default function App() {
             }}
           />
         ) : null}
-        {showNotificationComposer && hasAdminRole && (
+        {showNotificationComposer && (
           <NotificationComposerModal
-            recipients={teammateEmails}
+            notifications={notifications}
             patients={patients}
+            recipients={counselorAssignmentOptions}
             currentUserEmail={activeUserEmail}
+            currentUserId={activeUserId}
             onClose={() => setShowNotificationComposer(false)}
-            onSend={async (payload) => {
-              const ok = await sendNotification(payload);
+            onSendHighlight={async (payload) => {
+              const ok = await sendPatientHighlight(payload);
               if (ok) setShowNotificationComposer(false);
             }}
+            onReplyToThread={async (notificationId, message) => {
+              await replyToNotification(notificationId, message);
+            }}
+            onMarkThreadRead={async (notificationId) => {
+              await markHighlightThreadRead(notificationId);
+            }}
+            onDeleteThread={async (notificationId) => {
+              await dataClient.deleteNotificationThread(notificationId);
+              setNotifications((prev) => {
+                const targetThreadId = prev.find((entry) => entry.id === notificationId)?.threadId ?? notificationId;
+                const next = prev.filter((note) => (note.threadId ?? note.id) !== targetThreadId);
+                setHighlightedPatientIds(buildHighlightMap(next));
+                return next;
+              });
+            }}
+            onOpenPatient={openPatient}
           />
         )}
         {replyTarget ? (
@@ -4054,29 +4598,28 @@ export default function App() {
             }}
           />
         ) : null}
-        {highlightTarget && hasAdminRole ? (
+        {highlightTarget ? (
           <PatientHighlightModal
+            patientId={highlightTarget.patientId}
             patientName={highlightTarget.patientName}
+            patients={patients}
+            counselorOptions={counselorAssignmentOptions}
+            currentUserEmail={activeUserEmail}
+            defaultRecipientEmail={
+              (highlightTarget.patientId
+                ? caseAssignmentEmails[highlightTarget.patientId] ??
+                  (caseAssignments[highlightTarget.patientId]?.includes("@") ? caseAssignments[highlightTarget.patientId] : "") ??
+                  highlightTarget.recipientEmail ??
+                  ""
+                : highlightTarget.recipientEmail ?? "")
+            }
             onClose={() => setHighlightTarget(null)}
-            onSend={async ({ message, priority }) => {
+            onSend={async ({ patientId, message, priority, recipientEmail }) => {
               const ok = await sendPatientHighlight({
-                patientId: highlightTarget.patientId,
+                patientId,
                 message,
                 priority,
-              });
-              if (ok) setHighlightTarget(null);
-            }}
-          />
-        ) : null}
-        {highlightTarget && hasAdminRole ? (
-          <PatientHighlightModal
-            patientName={highlightTarget.patientName}
-            onClose={() => setHighlightTarget(null)}
-            onSend={async ({ message, priority }) => {
-              const ok = await sendPatientHighlight({
-                patientId: highlightTarget.patientId,
-                message,
-                priority,
+                recipientEmail,
               });
               if (ok) setHighlightTarget(null);
             }}
@@ -4091,7 +4634,7 @@ export default function App() {
     return (
       <div className="page">
         <div className="topRow">
-          <button className="btn" onClick={() => setRoute({ name: "home" })}>
+          <button className="btn" onClick={goHome}>
             ←
           </button>
           <div className="count">Mobile setup</div>
@@ -4158,12 +4701,46 @@ export default function App() {
     );
   }
 
+  if (route.name === "patientbridge") {
+    return (
+      <div className="page patientBridgePage">
+        <PatientBridgeWorkbookPage
+          patients={directoryPatients}
+          onRefreshPatients={() => void loadPatientDirectory()}
+          onBackToPatientFinder={goHome}
+          onOpenPatient={openPatient}
+          onHighlightPatient={({ patientId, patientName, recipientEmail }) => setHighlightTarget({ patientId, patientName, recipientEmail })}
+        />
+        {highlightTarget ? (
+          <PatientHighlightModal
+            patientId={highlightTarget.patientId}
+            patientName={highlightTarget.patientName}
+            patients={directoryPatients.length ? directoryPatients : patients}
+            counselorOptions={counselorAssignmentOptions}
+            currentUserEmail={activeUserEmail}
+            defaultRecipientEmail={highlightTarget.recipientEmail ?? ""}
+            onClose={() => setHighlightTarget(null)}
+            onSend={async ({ patientId, message, priority, recipientEmail }) => {
+              const ok = await sendPatientHighlight({
+                patientId,
+                message,
+                priority,
+                recipientEmail,
+              });
+              if (ok) setHighlightTarget(null);
+            }}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   /* ---------- ATTENDANCE ---------- */
   if (route.name === "attendance") {
     return (
       <div className="page">
         <div className="topRow">
-          <button className="btn" onClick={() => setRoute({ name: "home" })}>
+          <button className="btn" onClick={goHome}>
             ←
           </button>
           <div className="count">Visits & tests entries: {sessions.length}</div>
@@ -4192,7 +4769,7 @@ export default function App() {
     return (
       <div className="page">
         <div className="topRow">
-          <button className="btn" onClick={() => setRoute({ name: "home" })}>
+          <button className="btn" onClick={goHome}>
             ←
           </button>
           <div className="count">Billing entries: {billingEntries.length}</div>
@@ -4217,7 +4794,7 @@ export default function App() {
     return (
       <div className="page">
         <div className="topRow">
-          <button className="btn" onClick={() => setRoute({ name: "home" })}>
+          <button className="btn" onClick={goHome}>
             ←
           </button>
           <div className="count">Group sessions: {groupSessions.length}</div>
@@ -4267,8 +4844,8 @@ export default function App() {
 
     return (
       <div className="page">
-        <div className="topRow">
-          <button className="btn" onClick={() => setRoute({ name: "home" })}>
+        <div className="topRow patientRouteTopRow">
+          <button className="btn" onClick={goHome}>
             ←
           </button>
 
@@ -4292,6 +4869,9 @@ export default function App() {
         ) : p ? (
           <PatientPage
             patient={p}
+            patientOptions={patients}
+            currentUserEmail={activeUserEmail}
+            counselorOptions={counselorAssignmentOptions}
             allSessions={sessions}
             dataClient={dataClient}
             hasAssignment={Boolean(caseAssignments[p.id] || caseAssignmentEmails[p.id])}
@@ -4313,25 +4893,27 @@ export default function App() {
             onUpdateCompliance={(patch) => updateCompliance(p.id, patch)}
             onUpdateRosterDetails={(patch) => updateRosterDetails(p.id, patch)}
             onUpdatePatient={(next) => {
-              setPatients((prev) => prev.map((x) => (x.id === next.id ? next : x)));
-              setPatientDetail((current) => (current && current.id === next.id ? next : current));
+              const normalizedNextId = normalizePatientId(next.id);
+              setPatients((prev) => prev.map((x) => (normalizePatientId(x.id) === normalizedNextId ? { ...x, ...next, id: x.id } : x)));
+              setPatientDetail((current) => (current && normalizePatientId(current.id) === normalizedNextId ? { ...current, ...next, id: current.id } : current));
             }}
             onDeletePatient={() => {
               setPatients((prev) => prev.filter((x) => x.id !== p.id));
               setPatientDetail(null);
-              setRoute({ name: "home" });
+              goHome();
             }}
             canManageAssignment={canManageAssignments}
             canDeletePatient={hasAdminRole}
-            canHighlightPatient={hasAdminRole}
-            onSendHighlight={async ({ message, priority }) =>
+            canHighlightPatient={Boolean(activeAuthUser)}
+            onSendHighlight={async ({ patientId, message, priority, recipientEmail }) =>
               sendPatientHighlight({
-                patientId: p.id,
+                patientId,
                 message,
                 priority,
+                recipientEmail,
               })
             }
-            unreadHighlightNote={unreadPatientNotificationMap[p.id]}
+            unreadHighlightNote={unreadPatientNotificationMap[normalizePatientId(p.id)]}
             onMarkHighlightRead={() => dismissPatientHighlights(p.id)}
             onReplyToHighlight={async (notificationId, message) => {
               await dataClient.replyToNotification(notificationId, { message });
@@ -4384,15 +4966,28 @@ export default function App() {
             }}
           />
         ) : null}
-        {highlightTarget && hasAdminRole ? (
+        {highlightTarget ? (
           <PatientHighlightModal
+            patientId={highlightTarget.patientId}
             patientName={highlightTarget.patientName}
+            patients={patients}
+            counselorOptions={counselorAssignmentOptions}
+            currentUserEmail={activeUserEmail}
+            defaultRecipientEmail={
+              (highlightTarget.patientId
+                ? caseAssignmentEmails[highlightTarget.patientId] ??
+                  (caseAssignments[highlightTarget.patientId]?.includes("@") ? caseAssignments[highlightTarget.patientId] : "") ??
+                  highlightTarget.recipientEmail ??
+                  ""
+                : highlightTarget.recipientEmail ?? "")
+            }
             onClose={() => setHighlightTarget(null)}
-            onSend={async ({ message, priority }) => {
+            onSend={async ({ patientId, message, priority, recipientEmail }) => {
               const ok = await sendPatientHighlight({
-                patientId: highlightTarget.patientId,
+                patientId,
                 message,
                 priority,
+                recipientEmail,
               });
               if (ok) setHighlightTarget(null);
             }}
@@ -4490,12 +5085,12 @@ function SearchResults({
   complianceByPatient,
   caseAssignments,
   counselorId,
-  isMobile,
   onUpdateCompliance,
   onUpdateRosterDetails,
   selectedId,
   onSelect,
   onOpen,
+  onShiftHighlight,
   selected,
   isAdminView,
   highlightedPatientIds,
@@ -4507,12 +5102,12 @@ function SearchResults({
   complianceByPatient: Record<string, PatientCompliance>;
   caseAssignments: Record<string, string>;
   counselorId: string;
-  isMobile: boolean;
-  onUpdateCompliance: (patientId: string, patch: Partial<PatientCompliance>) => void | Promise<void>;
+  onUpdateCompliance: (patientId: string, patch: CompliancePatch) => void | Promise<void>;
   onUpdateRosterDetails: (patientId: string, patch: Partial<PatientRosterDetails>) => void | Promise<void>;
   selectedId?: string;
   onSelect: (id: string) => void;
   onOpen: (id: string) => void;
+  onShiftHighlight?: (patient: Patient) => void;
   selected?: Patient;
   isAdminView: boolean;
   highlightedPatientIds: Record<string, "normal" | "urgent">;
@@ -4651,9 +5246,9 @@ function SearchResults({
       { key: "medical_phys_apt", label: "Medical / Phys Apt", value: patient.rosterDetails?.medicalPhysApt ?? "Not set", tone: "neutral" },
       { key: "med_form_status", label: "Med Form", value: patient.rosterDetails?.medFormStatus ?? "Not set", tone: "neutral" },
       { key: "referring_agency", label: "Referring Agency", value: patient.rosterDetails?.referringAgency ?? "Not set", tone: "neutral" },
-      { key: "problem_list_date", label: "Problem List", value: fmt(compliance?.problemListDate), tone: getProblemListSummary(compliance).tone },
-      { key: "problem_list_review", label: "Problem List Review", value: fmt(compliance?.lastProblemListReview), tone: getProblemListSummary(compliance).tone },
-      { key: "problem_list_update", label: "Problem List Update", value: fmt(compliance?.lastProblemListUpdate), tone: getProblemListSummary(compliance).tone },
+      { key: "problem_list_date", label: "Problem List", value: fmt(compliance?.problemListDate), tone: getProblemListSummary(compliance, patient).tone },
+      { key: "problem_list_review", label: "Problem List Review", value: fmt(compliance?.lastProblemListReview), tone: getProblemListSummary(compliance, patient).tone },
+      { key: "problem_list_update", label: "Problem List Update", value: fmt(compliance?.lastProblemListUpdate), tone: getProblemListSummary(compliance, patient).tone },
       { key: "treatment_plan_date", label: "Treatment Plan", value: fmt(compliance?.treatmentPlanDate), tone: getTreatmentPlanSummary(patient, compliance).tone },
       { key: "treatment_plan_update", label: "Treatment Plan Update", value: fmt(compliance?.lastTreatmentPlanUpdate), tone: getTreatmentPlanSummary(patient, compliance).tone },
       { key: "next_up", label: "Next Up", value: getNextUpSummary(patient, compliance, weekDate).label, tone: getNextUpSummary(patient, compliance, weekDate).tone === "behind" ? "over" : getNextUpSummary(patient, compliance, weekDate).tone },
@@ -4694,82 +5289,6 @@ function SearchResults({
     });
   };
 
-  if (isMobile && view === "cards") {
-    return (
-      <div className="workspaceMobileRoster">
-        <div className="workspaceRosterCard">
-          <div className="workspaceRosterHead">
-            <div>
-              <div className="workspaceSectionLabel">Mobile Roster</div>
-              <div className="workspaceRosterTitle">Tap a patient to open the same focused workflow as the iOS app.</div>
-            </div>
-            <div className="workspaceResultsCount">{rows.length} visible</div>
-          </div>
-
-          <div className="workspaceMobilePatientList">
-            {rows.map((p) => {
-              const attendance = getWeeklyAttendanceStats(p, sessions, weekDate);
-              const drug = getDrugTestSummary(p, complianceByPatient[p.id], weekDate);
-              const problemList = getProblemListSummary(complianceByPatient[p.id]);
-              const workItems = getPatientWorkItems(p, complianceByPatient[p.id], sessions, weekDate).slice(0, 2);
-
-              return (
-                <button
-                  key={p.id}
-                  className={
-                    p.id === selectedId
-                      ? `workspaceMobilePatientCard selected${getHighlightClass(p.id)}`
-                      : `workspaceMobilePatientCard${getHighlightClass(p.id)}`
-                  }
-                  onClick={() => {
-                    onSelect(p.id);
-                    onOpen(p.id);
-                  }}
-                >
-                  <div className="workspaceMobilePatientTop">
-                    <div className="workspaceMobilePatientIdentity">
-                      <strong>{p.displayName}</strong>
-                      <span>MRN {p.mrn ?? "—"} • {p.primaryProgram ?? "Program not set"}</span>
-                    </div>
-                    <div className="workspaceMobilePatientChevron" aria-hidden="true">›</div>
-                  </div>
-
-                  <div className="workspaceMobilePatientSignals">
-                    <span className={pillClass(p.kind)}>{p.kind}</span>
-                    {caseAssignments[p.id] === counselorId ? <span className="miniAssignmentTag">My case load</span> : null}
-                    <AttendanceStatusChip patient={p} sessions={sessions} weekDate={weekDate} />
-                  </div>
-
-                  <div className="workspaceMobilePatientStats">
-                    <div className="workspaceMobileStatCard">
-                      <span className="workspaceMiniLabel">Next appt</span>
-                      <strong>{fmt(p.nextApptDate)}</strong>
-                    </div>
-                    <div className="workspaceMobileStatCard">
-                      <span className="workspaceMiniLabel">This week</span>
-                      <strong>{attendance.goal ? `${attendance.attendedHours}h` : "No goal"}</strong>
-                    </div>
-                  </div>
-
-                  <div className="workspaceMobilePatientFooter">
-                    <span className={`workspaceTone ${drug.tone}`}>{drug.label}</span>
-                    <span className={`workspaceTone ${problemList.tone}`}>{problemList.reviewText}</span>
-                    {workItems.map((item) => (
-                      <span key={item.id} className={`workspaceTone ${item.tone}`}>
-                        {item.title}: {item.detail}
-                      </span>
-                    ))}
-                  </div>
-                </button>
-              );
-            })}
-            {!rows.length ? <div className="workspaceEmptyState">No patients match the current search or filters.</div> : null}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (view === "split") {
     const selectedPatient = selected ?? null;
 
@@ -4785,7 +5304,7 @@ function SearchResults({
           </div>
           <div className="workspaceSplitList">
             {rows.map((p) => {
-              const problemList = getProblemListSummary(complianceByPatient[p.id]);
+              const problemList = getProblemListSummary(complianceByPatient[p.id], p);
               const rowCompliance: PatientCompliance = {
                 ...(complianceByPatient[p.id] ?? {}),
                 problemListDate: complianceByPatient[p.id]?.problemListDate,
@@ -4793,8 +5312,9 @@ function SearchResults({
               };
               const nextUp = getNextUpSummary(p, rowCompliance, weekDate);
               const treatmentPlan = getTreatmentPlanSummary(p, rowCompliance);
-              const locCode = (p.primaryProgram ?? "").includes("2.1") ? "2.1" : (p.primaryProgram ?? "").includes("1.0") ? "1.0" : "—";
-              const docSummary = formatSpreadsheetDrugChoices(p.rosterDetails?.drugOfChoice);
+              const docSummary = formatSpreadsheetDrugChoices(
+                p.rosterDetails?.drugOfChoice
+              );
               return (
                 <button
                   key={p.id}
@@ -4803,7 +5323,15 @@ function SearchResults({
                       ? `workspaceSplitRow selected${getHighlightClass(p.id)}`
                       : `workspaceSplitRow${getHighlightClass(p.id)}`
                   }
-                  onClick={() => onSelect(p.id)}
+                  onClick={(event) => {
+                    if (event.shiftKey && onShiftHighlight) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onShiftHighlight(p);
+                      return;
+                    }
+                    onSelect(p.id);
+                  }}
                   onDoubleClick={() => onOpen(p.id)}
                   title="Double-click to open"
                 >
@@ -4811,8 +5339,8 @@ function SearchResults({
                     <strong>{p.displayName}</strong>
                     <div className="workspaceSplitMetaInline">
                       <span className="workspaceSplitMetaText workspaceSplitMetaTextSage">Sage ID {p.mrn ?? "—"}</span>
-                      <span className="workspaceSplitMetaText workspaceSplitMetaTextProgram">LOC {locCode}</span>
-                      <span className="workspaceSplitMetaText workspaceSplitMetaTextDoc">DOC {docSummary || "—"}</span>
+                      <span className="workspaceSplitMetaText workspaceSplitMetaTextProgram">{p.primaryProgram ?? "—"}</span>
+                      <span className="workspaceSplitMetaText workspaceSplitMetaTextDoc">{docSummary || "—"}</span>
                     </div>
                   </div>
                   <div className="workspaceSplitGrid">
@@ -4931,10 +5459,8 @@ function SearchResults({
               <div>Problem List</div>
               <div>Treatment Plan</div>
               <div>Next Up</div>
-              <div className="workspaceSheetSpacer" aria-hidden="true" />
-              <div>Problem List Review 30/60</div>
-              <div>Problem List Update 90</div>
-              <div>Treatment Plan Update 180</div>
+              <div>Last PL Review</div>
+              <div>Days in Treatment</div>
               <div>Medical / Phys Apt.</div>
               <div>Med Form</div>
               <div>Referring Agency</div>
@@ -4952,20 +5478,22 @@ function SearchResults({
                 problemListDate: effectiveProblemListDate,
                 treatmentPlanDate: effectiveTreatmentPlanDate,
               };
-              const dueDates = getProblemListDueDates(effectiveCompliance);
-              const problemList = getProblemListSummary(effectiveCompliance);
+              const problemListEnded = isProblemListEnded(p);
+              const dueDates = getProblemListDueDates(effectiveCompliance, p);
               const problemListInitialDueDate = getProblemListInitialDueDate(p);
               const problemListInitialDueDelta = dayDiff(weekDate, problemListInitialDueDate);
-              const needsProblemListSetButton = !effectiveProblemListDate;
+              const needsProblemListSetButton = !problemListEnded && !effectiveProblemListDate;
               const showProblemListSetRedGlow = needsProblemListSetButton && problemListInitialDueDelta <= 2;
               const treatmentPlanDueDate = addDaysIso(p.intakeDate, 30);
               const treatmentPlanDaysUntilDue = dayDiff(weekDate, treatmentPlanDueDate);
-              const needsTreatmentPlanSetButton = Boolean(effectiveProblemListDate) && !effectiveTreatmentPlanDate;
+              const treatmentPlanEnded = isTreatmentPlanEnded(p);
+              const needsTreatmentPlanSetButton = !treatmentPlanEnded && Boolean(effectiveProblemListDate) && !effectiveTreatmentPlanDate;
               const showTreatmentPlanSetRedGlow = needsTreatmentPlanSetButton && treatmentPlanDaysUntilDue <= 5;
-              const treatmentPlanDueDates = getTreatmentPlanDueDates(p, effectiveCompliance);
               const nextUp = getNextUpSummary(p, effectiveCompliance, weekDate);
-              const locCode = (p.primaryProgram ?? "").includes("2.1") ? "2.1" : (p.primaryProgram ?? "").includes("1.0") ? "1.0" : "—";
-              const docSummary = formatSpreadsheetDrugChoices(p.rosterDetails?.drugOfChoice);
+              const lastProblemListReviewLabel = getLastProblemListReviewLabel(effectiveCompliance, p);
+              const docSummary = formatSpreadsheetDrugChoices(
+                p.rosterDetails?.drugOfChoice
+              );
               const reauthDelta = p.rosterDetails?.reauthSapcDate ? dayDiff(weekDate, p.rosterDetails.reauthSapcDate) : null;
               const reviewDelta = dueDates?.nextReview ? dayDiff(weekDate, dueDates.nextReview) : null;
               const updateDelta = dueDates ? dayDiff(weekDate, dueDates.nextUpdate) : null;
@@ -4989,7 +5517,15 @@ function SearchResults({
                       ? `workspaceSheetRow ${rowTone} selected${getHighlightClass(p.id)}`
                       : `workspaceSheetRow ${rowTone}${getHighlightClass(p.id)}`
                   }
-                  onClick={() => onSelect(p.id)}
+                  onClick={(event) => {
+                    if (event.shiftKey && onShiftHighlight) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onShiftHighlight(p);
+                      return;
+                    }
+                    onSelect(p.id);
+                  }}
                   onDoubleClick={() => onOpen(p.id)}
                   title="Double-click to open"
                 >
@@ -4997,11 +5533,13 @@ function SearchResults({
                     <strong>{p.displayName}</strong>
                     <div className="workspaceMetaInline">
                       <span className="workspaceMetaText workspaceMetaTextSage" style={{ color: "#d89bff" }}>Sage ID {p.mrn ?? "—"}</span>
-                      <span className="workspaceMetaText workspaceMetaTextProgram" style={{ color: "#88b8ff" }}>LOC {locCode}</span>
-                      <span className="workspaceMetaText workspaceMetaTextDoc" style={{ color: "#ff7a55" }}>DOC {docSummary}</span>
+                      <span className="workspaceMetaText workspaceMetaTextProgram" style={{ color: "#88b8ff" }}>{p.primaryProgram ?? "—"}</span>
+                      <span className="workspaceMetaText workspaceMetaTextDoc" style={{ color: "#ff7a55" }}>{docSummary}</span>
                     </div>
                   </div>
-                  <div>{fmt(p.intakeDate)}</div>
+                  <div className="workspaceSheetDateCell">
+                    <span className="workspaceTone neutral">{fmt(p.intakeDate)}</span>
+                  </div>
                   <div>
                     {needsProblemListSetButton ? (
                       <span
@@ -5035,7 +5573,7 @@ function SearchResults({
                           });
                         }}
                       >
-                        Set
+                        Set Problem List
                       </span>
                     ) : (
                       <span
@@ -5139,7 +5677,7 @@ function SearchResults({
                       </span>
                     )}
                   </div>
-                  <div>
+                  <div className="workspaceNextUpCell">
                     <span
                       className={
                         nextUp.tone === "behind"
@@ -5175,56 +5713,15 @@ function SearchResults({
                           mode,
                         });
                       }}
-                    >
+                      >
                       {nextUp.label}
                     </span>
                   </div>
-                  <div className="workspaceSheetSpacer" aria-hidden="true" />
-                  <div>
-                    <span
-                      className={`workspaceTone ${problemList.tone}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setProblemListPicker({
-                        patientId: p.id,
-                        patientName: p.displayName,
-                        value: weekDate,
-                        mode: "problemListReview",
-                      })}
-                    >
-                      {dueDates?.nextReview ? fmt(dueDates.nextReview) : "—"}
-                    </span>
+                  <div className="workspaceSheetDateCell">
+                    {lastProblemListReviewLabel ? <span className="workspaceTone neutral">{lastProblemListReviewLabel}</span> : null}
                   </div>
-                  <div>
-                    <span
-                      className={`workspaceTone ${problemList.tone}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setProblemListPicker({
-                        patientId: p.id,
-                        patientName: p.displayName,
-                        value: weekDate,
-                        mode: "problemListUpdate",
-                      })}
-                    >
-                      {dueDates?.nextUpdate ? fmt(dueDates.nextUpdate) : "—"}
-                    </span>
-                  </div>
-                  <div>
-                    <span
-                      className="workspaceTone neutral"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setProblemListPicker({
-                        patientId: p.id,
-                        patientName: p.displayName,
-                        value: weekDate,
-                        mode: "treatmentPlanUpdate",
-                        treatmentPlanCycleDays: effectiveCompliance.treatmentPlanCycleDays ?? 90,
-                      })}
-                    >
-                      {fmt(treatmentPlanDueDates.nextUpdate)}
-                    </span>
+                  <div className="workspaceDaysInTreatment">
+                    {`${Math.max(0, dayDiff(p.intakeDate, todayIso()))} days`}
                   </div>
                   <div>
                     <SheetSelectCell
@@ -5451,8 +5948,9 @@ function SearchResults({
           treatmentPlanDate: sheetTreatmentPlanDates[p.id] ?? complianceByPatient[p.id]?.treatmentPlanDate,
         };
         const nextUp = getNextUpSummary(p, rowCompliance, weekDate);
-        const locCode = (p.primaryProgram ?? "").includes("2.1") ? "2.1" : (p.primaryProgram ?? "").includes("1.0") ? "1.0" : "—";
-        const docSummary = formatSpreadsheetDrugChoices(p.rosterDetails?.drugOfChoice);
+              const docSummary = formatSpreadsheetDrugChoices(
+                p.rosterDetails?.drugOfChoice
+              );
         const extraOptions = getCardExtraOptions(p, rowCompliance);
         const selectedExtraKeys = cardExtrasByPatient[normalizedId] ?? defaultCardExtraKeys;
         const visibleExtras = extraOptions.filter((item) => selectedExtraKeys.includes(item.key));
@@ -5495,7 +5993,15 @@ function SearchResults({
               height: `${cardHeight}px`,
               overflow: "hidden",
             }}
-            onClick={() => onSelect(p.id)}
+            onClick={(event) => {
+              if (event.shiftKey && onShiftHighlight) {
+                event.preventDefault();
+                event.stopPropagation();
+                onShiftHighlight(p);
+                return;
+              }
+              onSelect(p.id);
+            }}
             onDoubleClick={() => onOpen(p.id)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -5515,8 +6021,8 @@ function SearchResults({
                 <strong>{p.displayName}</strong>
                 <div className="workspaceMetaInline">
                   <span className="workspaceMetaText workspaceMetaTextSage" style={{ color: "#d89bff" }}>SAGE # {p.mrn ?? "—"}</span>
-                  <span className="workspaceMetaText workspaceMetaTextProgram" style={{ color: "#88b8ff" }}>LOC {locCode}</span>
-                  <span className="workspaceMetaText workspaceMetaTextDoc" style={{ color: "#ff7a55" }}>DOC {docSummary}</span>
+                  <span className="workspaceMetaText workspaceMetaTextProgram" style={{ color: "#88b8ff" }}>{p.primaryProgram ?? "—"}</span>
+                  <span className="workspaceMetaText workspaceMetaTextDoc" style={{ color: "#ff7a55" }}>{docSummary}</span>
                 </div>
               </div>
               <div className="workspaceTileTopActions">
@@ -5738,97 +6244,212 @@ function CaseAssignmentModal({
   }
 
 function NotificationComposerModal({
-  recipients,
+  notifications,
   patients,
+  recipients,
   currentUserEmail,
+  currentUserId,
   onClose,
-  onSend,
+  onSendHighlight,
+  onReplyToThread,
+  onMarkThreadRead,
+  onDeleteThread,
+  onOpenPatient,
 }: {
-  recipients: string[];
+  notifications: InAppNotification[];
   patients: Patient[];
+  recipients: Array<{ email: string; label: string }>;
   currentUserEmail: string;
+  currentUserId: string;
   onClose: () => void;
-  onSend: (payload: {
-    recipientEmail: string;
-    title: string;
-    message: string;
-    priority: "normal" | "urgent";
-    patientId: string;
-  }) => Promise<void>;
+  onSendHighlight: (payload: { patientId: string; recipientEmail: string; message: string; priority: "normal" | "urgent" }) => Promise<void>;
+  onReplyToThread: (notificationId: string, message: string) => Promise<void>;
+  onMarkThreadRead: (notificationId: string) => Promise<void>;
+  onDeleteThread: (notificationId: string) => Promise<void>;
+  onOpenPatient?: (patientId: string) => void;
 }) {
-  const [recipientEmail, setRecipientEmail] = useState(recipients.find((email) => email !== currentUserEmail) ?? "");
-  const [title, setTitle] = useState("");
-  const [message, setMessage] = useState("");
-  const [priority, setPriority] = useState<"normal" | "urgent">("normal");
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [recipientEmail, setRecipientEmail] = useState("");
   const [patientId, setPatientId] = useState("");
+  const [priority, setPriority] = useState<"normal" | "urgent">("normal");
+  const [message, setMessage] = useState("");
+  const [replyDraft, setReplyDraft] = useState("");
   const [sending, setSending] = useState(false);
+
+  const threads = useMemo(
+    () => buildHighlightThreads(notifications, patients, currentUserEmail, currentUserId),
+    [notifications, patients, currentUserEmail, currentUserId]
+  );
+  const selectedThread = threads.find((thread) => thread.threadId === selectedThreadId) ?? threads[0] ?? null;
+
+  useEffect(() => {
+    if (!selectedThreadId && threads[0]) {
+      setSelectedThreadId(threads[0].threadId);
+    }
+  }, [threads, selectedThreadId]);
+
+  useEffect(() => {
+    if (!selectedThread) return;
+    setReplyDraft("");
+  }, [selectedThread?.threadId]);
+
+  const threadReplySource =
+    selectedThread?.messages
+      .slice()
+      .reverse()
+      .find((note) => {
+        const senderEmail = (note.senderEmail ?? "").toLowerCase();
+        const senderUserId = note.senderUserId ?? "";
+        return senderEmail !== currentUserEmail.toLowerCase() && senderUserId !== currentUserId;
+      }) ??
+    null;
 
   return (
     <div className="modalOverlay" onClick={onClose}>
-      <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+      <div className="modalCard" style={{ width: "min(1100px, 96vw)", maxHeight: "92vh" }} onClick={(e) => e.stopPropagation()}>
         <div className="modalHead">
-          <div className="modalTitle">Send counselor note</div>
+          <div className="modalTitle">Highlights</div>
           <button className="modalClose" onClick={onClose}>✕</button>
         </div>
-        <div className="modalBody">
-          <div className="addGrid">
-            <label className="addField">
-              <span className="addLabel">Recipient</span>
-              <select className="select" value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)}>
-                <option value="">Choose teammate</option>
-                {recipients.filter((email) => email !== currentUserEmail).map((email) => (
-                  <option key={email} value={email}>{email}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="addField">
-              <span className="addLabel">Priority</span>
-              <select className="select" value={priority} onChange={(e) => setPriority(e.target.value as "normal" | "urgent")}>
-                <option value="normal">Normal</option>
-                <option value="urgent">Urgent</option>
-              </select>
-            </label>
-
-            <label className="addField">
-              <span className="addLabel">Patient</span>
-              <select className="select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
-                <option value="">Choose patient</option>
-                {patients.map((patient) => (
-                  <option key={patient.id} value={patient.id}>{patient.displayName}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="addField">
-              <span className="addLabel">Title</span>
-              <input className="authInput" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should they notice?" />
-            </label>
+        <div className="modalBody" style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 12, overflow: "hidden" }}>
+          <div className="highlightThreadList" style={{ overflow: "auto", minHeight: 0 }}>
+            {threads.length ? (
+              threads.map((thread) => (
+                <button
+                  key={thread.threadId}
+                  className={thread.threadId === selectedThread?.threadId ? "highlightThreadItem on" : "highlightThreadItem"}
+                  onClick={() => setSelectedThreadId(thread.threadId)}
+                >
+                  <div className="highlightThreadTop">
+                    <strong>{thread.patientName}</strong>
+                    {thread.unreadForMe ? <span className="highlightThreadUnread">New</span> : null}
+                  </div>
+                  <div className="highlightThreadMeta">{thread.latest.title}</div>
+                  <div className="highlightThreadMeta">{thread.latest.message}</div>
+                  <div className="highlightThreadFoot">
+                    {formatNotificationTimestamp(thread.latest.createdAt)}
+                    {thread.latest.senderEmail ? ` • ${thread.latest.senderEmail}` : ""}
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="workspaceEmptyState">No highlights yet.</div>
+            )}
           </div>
 
-          <label className="addField" style={{ marginTop: 12 }}>
-            <span className="addLabel">Message</span>
-            <textarea className="authInput controlCenterTextarea" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="What should the counselor focus on for this patient?" />
-          </label>
+          <div style={{ display: "grid", gap: 12, minHeight: 0, gridTemplateRows: "auto 1fr auto" }}>
+            <div className="highlightThreadPane" style={{ overflow: "auto", minHeight: 0 }}>
+              {selectedThread ? (
+                <>
+                  <div className="workspaceAgendaMeta">Patient</div>
+                  <div className="workspaceAgendaDetail">{selectedThread.patientName}</div>
+                  {selectedThread.patientId ? (
+                    <button className="btn ghost btnCompact" style={{ marginTop: 8 }} onClick={() => onOpenPatient?.(selectedThread.patientId!)}>
+                      Open patient
+                    </button>
+                  ) : null}
+                  <div className="highlightMessageStream" style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                    {selectedThread.messages.map((note) => (
+                      <div key={note.id} className={note.recipientEmail?.toLowerCase() === currentUserEmail.toLowerCase() || note.recipientUserId?.toLowerCase() === currentUserId.toLowerCase() ? "highlightBubble incoming" : "highlightBubble outgoing"}>
+                        <div className="workspaceAgendaMeta">
+                          {note.senderEmail ?? "patientfinder"} • {formatNotificationTimestamp(note.createdAt)}
+                        </div>
+                        <div className="workspaceAgendaDetail">{note.message}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="highlightActions" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                    {selectedThread.unreadForMe ? (
+                      <button className="btn ghost" onClick={() => void onMarkThreadRead(selectedThread.latest.id)}>
+                        Read
+                      </button>
+                    ) : null}
+                    <button className="btn ghost" onClick={() => void onDeleteThread(selectedThread.latest.id)}>
+                      Delete
+                    </button>
+                  </div>
+                  <label className="addField" style={{ marginTop: 12 }}>
+                    <span className="addLabel">Reply</span>
+                    <textarea className="authInput controlCenterTextarea" value={replyDraft} onChange={(e) => setReplyDraft(e.target.value)} placeholder="Write back to the last sender in this thread." />
+                  </label>
+                  <div className="modalFoot" style={{ paddingTop: 0 }}>
+                    <button className="btn" disabled={!replyDraft.trim() || !threadReplySource} onClick={async () => {
+                      if (!threadReplySource || !replyDraft.trim()) return;
+                      setSending(true);
+                      try {
+                        await onReplyToThread(threadReplySource.id, replyDraft.trim());
+                        setReplyDraft("");
+                      } finally {
+                        setSending(false);
+                      }
+                    }}>
+                      {sending ? "Sending..." : "Send reply"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="workspaceEmptyState">Pick a highlight to review the thread.</div>
+              )}
+            </div>
+
+            <div className="highlightComposer" style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 12 }}>
+              <div className="workspaceSectionLabel">New highlight</div>
+              <div className="addGrid">
+                <label className="addField">
+                  <span className="addLabel">Patient</span>
+                  <select className="select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
+                    <option value="">Choose patient</option>
+                    {patients.map((patient) => (
+                      <option key={patient.id} value={patient.id}>
+                        {patient.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="addField">
+                  <span className="addLabel">Send to</span>
+                  <select className="select" value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)}>
+                    <option value="">Choose counselor</option>
+                    {recipients
+                      .filter((option) => option.email.toLowerCase() !== currentUserEmail.toLowerCase())
+                      .map((option) => (
+                      <option key={option.email} value={option.email}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="addField">
+                  <span className="addLabel">Priority</span>
+                  <select className="select" value={priority} onChange={(e) => setPriority(e.target.value as "normal" | "urgent")}>
+                    <option value="normal">Low priority</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                </label>
+              </div>
+              <label className="addField" style={{ marginTop: 12 }}>
+                <span className="addLabel">Note</span>
+                <textarea className="authInput controlCenterTextarea" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Type what the counselor should focus on next." />
+              </label>
+            </div>
+          </div>
         </div>
         <div className="modalFoot">
-          <button className="btn ghost" onClick={onClose} disabled={sending}>Cancel</button>
+          <button className="btn ghost" onClick={onClose}>Close</button>
           <button
             className="btn"
-            disabled={sending || !recipientEmail || !patientId || !title.trim() || !message.trim()}
+            disabled={sending || !message.trim() || !recipientEmail || !patientId}
             onClick={async () => {
               setSending(true);
-              await onSend({
-                recipientEmail,
-                title: title.trim(),
-                message: message.trim(),
-                priority,
-                patientId,
-              });
-              setSending(false);
+              try {
+                await onSendHighlight({ patientId, recipientEmail, message: message.trim(), priority });
+                setMessage("");
+              } finally {
+                setSending(false);
+              }
             }}
           >
-            {sending ? "Sending..." : "Send"}
+            {sending ? "Sending..." : "Send highlight"}
           </button>
         </div>
       </div>
@@ -5854,7 +6475,7 @@ function NotificationReplyModal({
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHead">
-          <div className="modalTitle">Reply to admin note</div>
+          <div className="modalTitle">Reply to highlight</div>
           <button className="modalClose" onClick={onClose}>✕</button>
         </div>
         <div className="modalBody">
@@ -5868,7 +6489,7 @@ function NotificationReplyModal({
               className="authInput controlCenterTextarea"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Write your response back to admin"
+              placeholder="Write your response back to the sender"
             />
           </label>
         </div>
@@ -5892,28 +6513,67 @@ function NotificationReplyModal({
 }
 
 function PatientHighlightModal({
-  patientName,
+  patientId = "",
+  patientName = "",
+  patients,
+  counselorOptions = [],
+  currentUserEmail = "",
+  defaultRecipientEmail = "",
   onClose,
   onSend,
 }: {
-  patientName: string;
+  patientId?: string;
+  patientName?: string;
+  patients: Patient[];
+  counselorOptions?: Array<{ email: string; label: string }>;
+  currentUserEmail?: string;
+  defaultRecipientEmail?: string;
   onClose: () => void;
-  onSend: (payload: { message: string; priority: "normal" | "urgent" }) => Promise<void>;
+  onSend: (payload: { message: string; priority: "normal" | "urgent"; recipientEmail: string; patientId: string }) => Promise<void>;
 }) {
   const [message, setMessage] = useState("");
   const [priority, setPriority] = useState<"normal" | "urgent">("normal");
+  const [recipientEmail, setRecipientEmail] = useState(() => defaultRecipientEmail || "");
+  const [selectedPatientId, setSelectedPatientId] = useState(() => patientId || "");
   const [sending, setSending] = useState(false);
+  const selectedPatient = patients.find((patient) => patient.id === selectedPatientId) ?? null;
 
   return (
     <div className="modalOverlay" onClick={onClose}>
       <div className="modalCard" onClick={(e) => e.stopPropagation()}>
         <div className="modalHead">
-          <div className="modalTitle">Highlight patient for counselor</div>
+          <div className="modalTitle">Highlights</div>
           <button className="modalClose" onClick={onClose}>✕</button>
         </div>
         <div className="modalBody">
-          <div className="workspaceAgendaMeta">Patient</div>
-          <div className="workspaceAgendaDetail">{patientName}</div>
+          <div className="addGrid">
+            <label className="addField">
+              <span className="addLabel">Patient</span>
+              <select className="select" value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)}>
+                <option value="">Choose patient</option>
+                {patients.map((patient) => (
+                  <option key={patient.id} value={patient.id}>
+                    {patient.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="addField">
+              <span className="addLabel">Send to</span>
+              <select className="select" value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)}>
+                <option value="">Choose counselor</option>
+                {counselorOptions
+                  .filter((option) => option.email.toLowerCase() !== currentUserEmail.toLowerCase())
+                  .map((option) => (
+                  <option key={option.email} value={option.email}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="workspaceAgendaMeta" style={{ marginTop: 12 }}>Selected patient</div>
+          <div className="workspaceAgendaDetail">{selectedPatient?.displayName || patientName || "Choose patient"}</div>
           <label className="addField" style={{ marginTop: 12 }}>
             <span className="addLabel">Priority</span>
             <select className="select" value={priority} onChange={(e) => setPriority(e.target.value as "normal" | "urgent")}>
@@ -5935,11 +6595,11 @@ function PatientHighlightModal({
           <button className="btn ghost" onClick={onClose} disabled={sending}>Cancel</button>
           <button
             className="btn"
-            disabled={sending || !message.trim()}
+            disabled={sending || !message.trim() || !recipientEmail || !selectedPatientId}
             onClick={async () => {
               setSending(true);
               try {
-                await onSend({ message: message.trim(), priority });
+                await onSend({ message: message.trim(), priority, recipientEmail, patientId: selectedPatientId });
               } finally {
                 setSending(false);
               }
@@ -5958,7 +6618,7 @@ function ThemePicker({ theme, setTheme }: { theme: ThemeId; setTheme: (t: ThemeI
   return (
     <div className="themeFloat">
       <button className="themeFloatBtn" onClick={() => setOpen((o) => !o)} title="Change theme" aria-label="Change theme">
-        <img className="themeFloatImage rainbow" src={themeButtonLogo} alt="" aria-hidden="true" />
+        <span className="themeFloatImage rainbow" aria-hidden="true" />
       </button>
       {open && (
         <div className="themePanel">
@@ -5997,7 +6657,7 @@ function PreviewCard({
   onHighlight: () => void;
 }) {
   const drugTest = getDrugTestSummary(patient, compliance, new Date().toISOString().slice(0, 10));
-  const problemList = getProblemListSummary(compliance);
+  const problemList = getProblemListSummary(compliance, patient);
   const treatmentPlan = getTreatmentPlanSummary(patient, compliance);
   const therapy = getTherapySummary(patient);
   return (
@@ -6016,7 +6676,7 @@ function PreviewCard({
             </button>
           ) : null}
           {assigned ? <span className="miniAssignmentTag">My case load</span> : null}
-          <div className={pillClass(patient.kind)}>{patient.kind}</div>
+          <div className="pill pill-active">{formatProgramBadge(patient.primaryProgram)}</div>
         </div>
       </div>
 
@@ -6086,6 +6746,9 @@ void _previewCardRetainedForFutureUse;
 
 function PatientPage({
   patient,
+  patientOptions,
+  currentUserEmail,
+  counselorOptions,
   allSessions,
   dataClient,
   hasAssignment,
@@ -6110,6 +6773,9 @@ function PatientPage({
   onQuickScheduleSession,
 }: {
   patient: Patient;
+  patientOptions: Patient[];
+  currentUserEmail: string;
+  counselorOptions: Array<{ email: string; label: string }>;
   allSessions: Session[];
   dataClient: DataClient;
   hasAssignment: boolean;
@@ -6119,14 +6785,19 @@ function PatientPage({
   compliance?: PatientCompliance;
   onAssignCase: () => void;
   onClearAssignment: () => void;
-  onUpdateCompliance: (patch: Partial<PatientCompliance>) => void;
+  onUpdateCompliance: (patch: CompliancePatch) => void;
   onUpdateRosterDetails: (patch: Partial<PatientRosterDetails>) => void;
   onUpdatePatient: (next: Patient) => void;
   onDeletePatient: () => void;
   canManageAssignment: boolean;
   canDeletePatient: boolean;
   canHighlightPatient: boolean;
-  onSendHighlight: (payload: { message: string; priority: "normal" | "urgent" }) => Promise<boolean>;
+  onSendHighlight: (payload: {
+    patientId: string;
+    message: string;
+    priority: "normal" | "urgent";
+    recipientEmail: string;
+  }) => Promise<boolean>;
   unreadHighlightNote?: InAppNotification;
   onMarkHighlightRead: () => Promise<void>;
   onReplyToHighlight: (notificationId: string, message: string) => Promise<void>;
@@ -6153,9 +6824,16 @@ function PatientPage({
   const [documentsBusy, setDocumentsBusy] = useState(false);
   const [vaultDocuments, setVaultDocuments] = useState<PatientVaultDocumentSummary[]>([]);
   const [vaultLoading, setVaultLoading] = useState(false);
-  const [vaultDocType, setVaultDocType] = useState<"assessment" | "problem_list" | "problem_list_note" | "treatment_plan" | "medical_necessity_note" | "discharge_note" | "session">("assessment");
+  const [vaultDocType, setVaultDocType] = useState<"assessment" | "asam_assessment" | "problem_list" | "problem_list_note" | "treatment_plan" | "medical_necessity_note" | "discharge_note" | "session">("assessment");
   const [vaultText, setVaultText] = useState("");
   const [vaultBusy, setVaultBusy] = useState<false | "pdf" | "text">(false);
+  const [nameSlayerOpen, setNameSlayerOpen] = useState(false);
+  const [nameSlayerBusy, setNameSlayerBusy] = useState<NameSlayerBusyState>(false);
+  const [nameSlayerStage, setNameSlayerStage] = useState<NameSlayerStage>("workflow");
+  const [nameSlayerFileName, setNameSlayerFileName] = useState("");
+  const [nameSlayerRedactedText, setNameSlayerRedactedText] = useState("");
+  const [nameSlayerStatus, setNameSlayerStatus] = useState("");
+  const [nameSlayerExtraTermInput, setNameSlayerExtraTermInput] = useState("");
   const [aiNoteType, setAiNoteType] = useState<AiNoteType>("problem_list");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiGeneratedNote, setAiGeneratedNote] = useState("");
@@ -6164,12 +6842,13 @@ function PatientPage({
   const [reviewCompletionsInput, setReviewCompletionsInput] = useState("");
   const [documentPreview, setDocumentPreview] = useState<{ url: string; fileName: string } | null>(null);
   const [showHighlightModal, setShowHighlightModal] = useState(false);
-  const [statusChanging, setStatusChanging] = useState(false);
   const [programSaving, setProgramSaving] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
   const [inlineReply, setInlineReply] = useState("");
   const [highlightActionBusy, setHighlightActionBusy] = useState<"read" | "reply" | null>(null);
   const [highlightReplyOpen, setHighlightReplyOpen] = useState(false);
+  const [patientTabMenuOpen, setPatientTabMenuOpen] = useState(false);
+  const patientTabMenuRef = useRef<HTMLDivElement | null>(null);
   const [showSignalPicker, setShowSignalPicker] = useState(false);
   const [selectedSignalKeys, setSelectedSignalKeys] = useState<string[]>(["assignment"]);
   const [showCompletionDatePicker, setShowCompletionDatePicker] = useState(false);
@@ -6201,7 +6880,7 @@ function PatientPage({
   const [quickSessionDuration, setQuickSessionDuration] = useState("60");
   const [quickSessionSaving, setQuickSessionSaving] = useState(false);
   const [quickSessionMessage, setQuickSessionMessage] = useState("");
-  const [attendancePlannerEnabled, setAttendancePlannerEnabled] = useState(true);
+  const [attendancePlannerEnabled, setAttendancePlannerEnabled] = useState(false);
 
   useEffect(() => {
     if (tab === "ai") return;
@@ -6315,9 +6994,9 @@ function PatientPage({
         setVaultDocuments(rows);
         setVaultLoading(false);
       })
-      .catch(() => {
+      .catch((error) => {
         if (cancelled) return;
-        setVaultDocuments([]);
+        console.error("Unable to load AI Vault documents:", error);
         setVaultLoading(false);
       });
     return () => {
@@ -6337,7 +7016,10 @@ function PatientPage({
     return allSessions.filter((s) => s.patientIds.includes(patient.id)).sort((a, b) => (a.date < b.date ? 1 : -1));
   }, [allSessions, patient.id]);
   const hasVaultAssessment = useMemo(
-    () => vaultDocuments.some((doc) => String(doc.document_type).replace(/^vault:/, "") === "assessment"),
+    () => vaultDocuments.some((doc) => {
+      const type = String(doc.document_type).replace(/^vault:/, "");
+      return type === "assessment" || type === "asam_assessment";
+    }),
     [vaultDocuments]
   );
   const hasVaultProblemList = useMemo(
@@ -6363,7 +7045,7 @@ function PatientPage({
   const attendanceWeekDate = patientAttendance[0]?.date ?? new Date().toISOString().slice(0, 10);
 
   const drugTestSummary = getDrugTestSummary(patient, compliance, new Date().toISOString().slice(0, 10));
-  const problemListSummary = getProblemListSummary(compliance);
+  const problemListSummary = getProblemListSummary(compliance, patient);
   const treatmentPlanSummary = getTreatmentPlanSummary(patient, compliance);
   const therapySummary = getTherapySummary(patient);
   const roster = patient.rosterDetails ?? {};
@@ -6479,25 +7161,43 @@ function PatientPage({
     }
   };
 
-  const handleStatusChange = async (newKind: PatientKind) => {
-    setStatusChanging(true);
-    const statusMap: Record<PatientKind, string> = {
-      "New Patient": "new",
-      "Current Patient": "current",
-      "RSS+": "rss_plus",
-      "RSS": "rss",
-      "Former Patient": "former",
-    };
-    await dataClient.updatePatient(patient.id, { status: statusMap[newKind] });
-    setStatusChanging(false);
-    onUpdatePatient({ ...patient, kind: newKind });
-  };
-
   const handlePrimaryProgramChange = async (newProgram: string) => {
+    const previousPatient = patient;
+    const previousPrimaryProgram = String(patient.primaryProgram ?? "").trim();
+    const nextPrimaryProgram = String(newProgram ?? "").trim();
+    const shouldResetProblemList =
+      Boolean(previousPrimaryProgram) &&
+      Boolean(nextPrimaryProgram) &&
+      previousPrimaryProgram.toLowerCase() !== nextPrimaryProgram.toLowerCase();
+    onUpdatePatient({
+      ...patient,
+      primaryProgram: nextPrimaryProgram || undefined,
+      kind: derivePatientKind(nextPrimaryProgram || undefined, patient.status, patient.intakeDate),
+    });
     setProgramSaving(true);
-    await dataClient.updatePatient(patient.id, { primary_program: newProgram || null });
-    setProgramSaving(false);
-    onUpdatePatient({ ...patient, primaryProgram: newProgram || undefined });
+    try {
+      const saved = await dataClient.updatePatient(patient.id, { primary_program: nextPrimaryProgram || null }) as any;
+      const savedPrimaryProgram = String(saved?.primary_program ?? nextPrimaryProgram ?? "").trim();
+      if (shouldResetProblemList && savedPrimaryProgram) {
+        await onUpdateCompliance({
+          resetProblemListCycle: true,
+          problemListDate: undefined,
+          lastProblemListReview: undefined,
+          lastProblemListUpdate: undefined,
+        });
+      }
+      const merged = { ...patient, ...mergePatientWithExtras(saved ?? {}, undefined, patient.rosterDetails), id: patient.id };
+      onUpdatePatient({
+        ...merged,
+        primaryProgram: savedPrimaryProgram || undefined,
+      });
+    } catch (error) {
+      onUpdatePatient(previousPatient);
+      console.error("Unable to update patient program:", error);
+      window.alert(getRequestErrorMessage(error, "Could not save patient program. Please try again."));
+    } finally {
+      setProgramSaving(false);
+    }
   };
 
   const completionDateValue = toDateOnly(patient.lastVisitDate) ?? "";
@@ -6505,6 +7205,42 @@ function PatientPage({
     setCompletionDateDraft(completionDateValue);
     setShowCompletionDatePicker(true);
   };
+  const daysInTreatment = Math.max(0, dayDiff(patient.intakeDate, todayIso()));
+  const ninetyDayDate = addDaysIso(patient.intakeDate, 90);
+  const hasReachedNinetyDays = daysInTreatment >= 90 || patient.kind === "RSS" || patient.kind === "RSS+" || patient.kind === "Former Patient";
+  const hasRssBadge = patient.kind === "RSS" || patient.kind === "RSS+" || patient.kind === "Former Patient";
+  const hasCompletionBadge = patient.kind === "Former Patient" || Boolean(completionDateValue);
+  const trajectoryMilestones = [
+    {
+      key: "intake",
+      label: "Intake",
+      detail: fmt(patient.intakeDate),
+      active: true,
+      tone: "intake",
+    },
+    {
+      key: "ninety",
+      label: "90 days",
+      detail: hasReachedNinetyDays ? fmt(ninetyDayDate) : `${Math.max(0, 90 - daysInTreatment)} days left`,
+      active: hasReachedNinetyDays,
+      tone: "ninety",
+    },
+    {
+      key: "rss",
+      label: patient.kind === "RSS+" ? "RSS+" : "RSS",
+      detail: hasRssBadge ? "Recovery support" : "Not yet",
+      active: hasRssBadge,
+      tone: "rss",
+    },
+    {
+      key: "completion",
+      label: "Completion",
+      detail: completionDateValue ? fmt(completionDateValue) : patient.kind === "Former Patient" ? "Past patient" : "Not yet",
+      active: hasCompletionBadge,
+      tone: "completion",
+      onClick: openCompletionDatePicker,
+    },
+  ];
   const saveCompletionDate = async () => {
     setCompletionDateSaving(true);
     try {
@@ -6526,6 +7262,28 @@ function PatientPage({
     { key: "consents", label: "Consents" },
     { key: "attendance", label: "Visits & tests" },
   ] as const;
+
+  useEffect(() => {
+    if (!patientTabMenuOpen) return;
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (patientTabMenuRef.current?.contains(target)) return;
+      setPatientTabMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPatientTabMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [patientTabMenuOpen]);
+
   const toggleRegimenWeekday = (key: "requiredVisitWeekdays" | "requiredTestWeekdays", weekday: number) => {
     setAttendanceRegimen((prev) => {
       const existing = prev[key];
@@ -6668,23 +7426,19 @@ function PatientPage({
     }
   };
 
-  const uploadVaultPdf = async (file: File) => {
-    setVaultBusy("pdf");
+  const uploadVaultTextPayload = async (text: string, fileName?: string) => {
+    if (!text.trim()) return;
+    setVaultBusy("text");
     try {
-      const base64 = await file.arrayBuffer().then((buffer) => {
-        const bytes = new Uint8Array(buffer);
-        let binary = "";
-        for (let i = 0; i < bytes.byteLength; i += 1) binary += String.fromCharCode(bytes[i]);
-        return btoa(binary);
-      });
-      await dataClient.uploadVaultPdf(patient.id, {
+      await dataClient.uploadVaultText(patient.id, {
         documentType: vaultDocType,
-        fileName: file.name,
-        pdfBase64: base64,
+        text: text.trim(),
+        fileName,
       });
     } catch (error) {
-      console.error("Unable to upload vault PDF:", error);
-      window.alert("Could not upload to Vault right now.");
+      console.error("Unable to upload vault text:", error);
+      window.alert("Could not save text to Vault right now.");
+      throw error;
     } finally {
       setVaultBusy(false);
     }
@@ -6692,19 +7446,100 @@ function PatientPage({
 
   const uploadVaultText = async () => {
     if (!vaultText.trim()) return;
-    setVaultBusy("text");
     try {
-      await dataClient.uploadVaultText(patient.id, {
-        documentType: vaultDocType,
-        text: vaultText.trim(),
-      });
+      await uploadVaultTextPayload(vaultText.trim());
       setVaultText("");
     } catch (error) {
       console.error("Unable to upload vault text:", error);
-      window.alert("Could not save text to Vault right now.");
     } finally {
-      setVaultBusy(false);
+      // handled by uploadVaultTextPayload
     }
+  };
+
+  const closeNameSlayerModal = () => {
+    if (nameSlayerBusy === "extracting" || nameSlayerBusy === "saving") return;
+    setNameSlayerOpen(false);
+    setNameSlayerBusy(false);
+    setNameSlayerStage("workflow");
+    setNameSlayerFileName("");
+    setNameSlayerRedactedText("");
+    setNameSlayerStatus("");
+    setNameSlayerExtraTermInput("");
+  };
+
+  const openNameSlayerPdf = async (file: File) => {
+    setNameSlayerFileName(file.name);
+    setNameSlayerRedactedText("");
+    setNameSlayerStatus("Processing locally...");
+    setNameSlayerExtraTermInput("");
+    setNameSlayerBusy("extracting");
+    setNameSlayerStage("splash");
+    setNameSlayerOpen(true);
+    try {
+      const sourceText = await extractTextFromPdf(file);
+      if (!sourceText.trim()) {
+        setNameSlayerRedactedText("");
+        setNameSlayerStatus("No readable text was found in that PDF.");
+        return;
+      }
+      setNameSlayerRedactedText(applyNameSlayerRedactions(sourceText, getNameSlayerPatientTerms(patient.displayName ?? "")));
+      setNameSlayerStatus("Review the redacted text and remove any missed PHI.");
+    } catch (error) {
+      console.error("Unable to prepare Name Slayer document:", error);
+      setNameSlayerRedactedText("");
+      setNameSlayerStatus(error instanceof Error ? error.message : "Could not read that PDF locally.");
+    } finally {
+      setNameSlayerBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!nameSlayerOpen) return;
+    const timer = window.setTimeout(() => setNameSlayerStage("workflow"), 2000);
+    return () => window.clearTimeout(timer);
+  }, [nameSlayerOpen]);
+
+  const saveNameSlayerResultToVault = async () => {
+    if (!nameSlayerRedactedText.trim()) return;
+    setNameSlayerBusy("saving");
+    try {
+      const baseName = nameSlayerFileName.replace(/\.[^.]+$/, "") || "redacted";
+      await uploadVaultTextPayload(nameSlayerRedactedText, `${baseName}.redacted.txt`);
+      setNameSlayerOpen(false);
+      setNameSlayerFileName("");
+      setNameSlayerRedactedText("");
+      setNameSlayerStatus("");
+      setNameSlayerExtraTermInput("");
+      window.alert("Redacted text saved to Vault.");
+    } catch {
+      // uploadVaultTextPayload already showed the error.
+    } finally {
+      setNameSlayerBusy(false);
+    }
+  };
+
+  const copyNameSlayerResult = async () => {
+    if (!nameSlayerRedactedText.trim()) return;
+    try {
+      await navigator.clipboard.writeText(nameSlayerRedactedText);
+    } catch (error) {
+      console.error("Unable to copy redacted text:", error);
+      window.alert("Could not copy redacted text to clipboard.");
+    }
+  };
+
+  const applyNameSlayerExtraTerms = () => {
+    const terms = nameSlayerExtraTermInput
+      .split(",")
+      .map((term) => term.trim())
+      .filter(Boolean);
+    if (!terms.length) {
+      setNameSlayerStatus("Enter a name or term to redact.");
+      return;
+    }
+    setNameSlayerRedactedText((current) => applyNameSlayerExtraTermRedactions(current, terms));
+    setNameSlayerStatus(`Redacted ${terms.length === 1 ? "the selected term" : `${terms.length} terms`} throughout the text.`);
+    setNameSlayerExtraTermInput("");
   };
 
   const generateAiNote = async (reviewContext?: { additions?: string; completions?: string }) => {
@@ -7079,23 +7914,27 @@ function PatientPage({
   }, [documentPreview]);
 
   return (
-    <div className="patientWrap">
+    <div
+      className="patientWrap"
+      onClickCapture={(event) => {
+        if (!event.shiftKey) return;
+        if (event.target instanceof HTMLElement && event.target.closest("button, input, select, textarea, a, summary, [role='button']")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setShowHighlightModal(true);
+      }}
+    >
       <div className="panel" style={{ maxWidth: 1120, margin: "0 auto" }}>
         <div className="panelHead patientPageHead">
           <span>{patient.displayName}</span>
-          <select
-            className={`${pillClass(patient.kind)} patientKindPill patientKindPillSelect`}
-            value={patient.kind}
-            onChange={(e) => handleStatusChange(e.target.value as PatientKind)}
-            disabled={statusChanging}
-            aria-label="Patient status"
-          >
-            <option value="New Patient">New Patient</option>
-            <option value="Current Patient">Current Patient</option>
-            <option value="RSS+">RSS+</option>
-            <option value="RSS">RSS</option>
-            <option value="Former Patient">Former Patient</option>
-          </select>
+          <IntakeChoiceSelect
+            value={patient.primaryProgram ?? ""}
+            options={PRIMARY_PROGRAM_OPTS}
+            onChange={(value) => handlePrimaryProgramChange(value)}
+            className="iChoiceSelectInline"
+            buttonClassName={`${pillClass(patient.kind)} patientKindPill patientKindPillSelect`}
+            disabled={programSaving}
+          />
           {canHighlightPatient || canManageAssignment || canDeletePatient ? (
             <details className="patientActionMenu">
               <summary className="btn ghost btnCompact patientActionMenuTrigger" aria-label="Patient actions" title="Patient actions">⋯</summary>
@@ -7137,9 +7976,13 @@ function PatientPage({
               <div className="heroMeta">
                 <span style={{ color: "#d89bff" }}>SAGE # {patient.mrn ?? "—"}</span>
                 {" • "}
-                <span style={{ color: "#88b8ff" }}>LOC {patient.primaryProgram ?? "—"}</span>
+                <span style={{ color: "#88b8ff" }}>{patient.primaryProgram ?? "—"}</span>
                 {" • "}
-                <span style={{ color: "#ff7a55" }}>DOC {formatSpreadsheetDrugChoices(patient.rosterDetails?.drugOfChoice)}</span>
+                <span style={{ color: "#ff7a55" }}>
+                  {formatSpreadsheetDrugChoices(
+                    patient.rosterDetails?.drugOfChoice
+                  )}
+                </span>
                 {" • "}
                 Counselor {counselorDisplay}
               </div>
@@ -7239,21 +8082,40 @@ function PatientPage({
           ) : null}
 
           <div className="patientTabMenu">
-            <div className="patientTabMenuControl">
-              <span className="patientTabMenuIcon" aria-hidden="true">☰</span>
-              <select
-                id="patient-tab-select"
-                className="patientTabMenuSelect"
-                value={tab}
-                onChange={(event) => setTab(event.target.value as typeof tab)}
+            <div className="patientTabMenuControl" ref={patientTabMenuRef}>
+              <button
+                type="button"
+                className="patientTabMenuButton"
+                onClick={() => setPatientTabMenuOpen((current) => !current)}
+                aria-expanded={patientTabMenuOpen}
+                aria-haspopup="menu"
                 aria-label="Patient section"
               >
+                <span className="patientTabMenuIcon" aria-hidden="true">☰</span>
+                <span className="patientTabMenuCurrent">
+                  {patientTabs.find((item) => item.key === tab)?.label ?? "Overview"}
+                </span>
+                <span className="patientTabMenuCaret" aria-hidden="true">▾</span>
+              </button>
+              {patientTabMenuOpen ? (
+                <div className="patientTabMenuDropdown" role="menu" aria-label="Patient sections">
                 {patientTabs.map((item) => (
-                  <option key={item.key} value={item.key}>
-                    {item.label}
-                  </option>
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={tab === item.key ? "patientTabMenuItem on" : "patientTabMenuItem"}
+                      role="menuitemradio"
+                      aria-checked={tab === item.key}
+                      onClick={() => {
+                        setTab(item.key);
+                        setPatientTabMenuOpen(false);
+                      }}
+                    >
+                      {item.label}
+                    </button>
                 ))}
-              </select>
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -7276,16 +8138,6 @@ function PatientPage({
 
               {overviewPane === "summary" ? (
                 <>
-                  <div className="intakeDateStage">
-                    <button
-                      type="button"
-                      className={completionDateValue ? "intakeDateBubble completionDateBubble" : "intakeDateBubble"}
-                      onClick={openCompletionDatePicker}
-                    >
-                      <div className="label">{completionDateValue ? "Completion date" : "Intake date"}</div>
-                      <div className="value">{completionDateValue ? fmt(completionDateValue) : fmt(patient.intakeDate)}</div>
-                    </button>
-                  </div>
                   <div className="tile overviewUnifiedCard">
                     <div className="overviewSignalsHead">
                       <div className="sectionTitle" style={{ marginBottom: 0 }}>Clinical Snapshot</div>
@@ -7307,25 +8159,48 @@ function PatientPage({
                       ))}
                     </div>
                   </div>
+                  <div className="trajectoryRoadCard" aria-label="Patient treatment trajectory">
+                    <div className="trajectoryRoad" aria-hidden="true" />
+                    {trajectoryMilestones.map((milestone) => {
+                      const content = (
+                        <>
+                          <span className="trajectoryBadgeLabel">{milestone.label}</span>
+                          <span className="trajectoryBadgeDetail">{milestone.detail}</span>
+                        </>
+                      );
+                      const className = `trajectoryBadge ${milestone.active ? "active" : "pending"} trajectoryBadge-${milestone.tone}`;
+                      return milestone.onClick ? (
+                        <button
+                          key={milestone.key}
+                          type="button"
+                          className={className}
+                          onClick={milestone.onClick}
+                          title="Set completion date"
+                        >
+                          {content}
+                        </button>
+                      ) : (
+                        <div key={milestone.key} className={className}>
+                          {content}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </>
               ) : null}
 
               {overviewPane === "roster" ? (
                 <>
-                <div className="controlCenterGrid">
+              <div className="controlCenterGrid">
                   <label className="addField">
-                    <span className="addLabel">Level of care</span>
-                    <select
-                      className="select"
+                    <span className="addLabel">Primary program</span>
+                    <IntakeChoiceSelect
                       value={patient.primaryProgram ?? ""}
-                      onChange={(e) => handlePrimaryProgramChange(e.target.value)}
+                      options={PRIMARY_PROGRAM_OPTS}
+                      onChange={(value) => handlePrimaryProgramChange(value)}
+                      buttonClassName={pillClass(patient.kind)}
                       disabled={programSaving}
-                    >
-                      <option value="">Select program</option>
-                      {LOC_PROGRAM_OPTS.map((option) => (
-                        <option key={option} value={option}>{option}</option>
-                      ))}
-                    </select>
+                    />
                   </label>
 
                   <label className="addField">
@@ -7717,33 +8592,41 @@ function PatientPage({
               <div className="aiWorkspace">
                 <div className="aiCol aiColUpload">
                   <div className="sectionTitle aiColTitle">Upload to Vault</div>
-                  <div className="addGrid" style={{ marginTop: 12 }}>
-                    <label className="addField" style={{ marginTop: "28px" }}>
-                      <select className="select" value={vaultDocType} onChange={(e) => setVaultDocType(e.target.value as typeof vaultDocType)}>
-                        <option value="assessment">Assessment</option>
-                        <option value="problem_list">Problem List</option>
-                        <option value="problem_list_note">Problem List Note</option>
-                        <option value="treatment_plan">Treatment Plan</option>
-                        <option value="medical_necessity_note">Medical Necessity Note</option>
-                        <option value="discharge_note">Discharge Note</option>
-                        <option value="session">Session</option>
-                      </select>
-                    </label>
-                    <label className="addField" style={{ marginTop: "28px" }}>
-                      <input
-                        className="authInput aiFileInputPlain"
-                        type="file"
-                        accept="application/pdf"
-                        disabled={vaultBusy !== false}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (!file) return;
-                          void uploadVaultPdf(file);
-                          event.target.value = "";
-                        }}
-                      />
-                    </label>
-                    <label className="addField aiUploadTextWrap" style={{ gridColumn: "1 / -1" }}>
+                  <div className="aiPanelBody">
+                    <div className="aiControlRow">
+                      <label className="addField aiDocTypeField">
+                        <span className="addLabel">Document type</span>
+                        <select className="select" value={vaultDocType} onChange={(e) => setVaultDocType(e.target.value as typeof vaultDocType)}>
+                          <option value="assessment">Assessment</option>
+                          <option value="asam_assessment">ASAM Assessment</option>
+                          <option value="problem_list">Problem List</option>
+                          <option value="problem_list_note">Problem List Note</option>
+                          <option value="treatment_plan">Treatment Plan</option>
+                          <option value="medical_necessity_note">Medical Necessity Note</option>
+                          <option value="discharge_note">Discharge Note</option>
+                          <option value="session">Session</option>
+                        </select>
+                      </label>
+                      <label className="addField aiFileField">
+                        <span className="addLabel">PDF file (opens Name Slayer)</span>
+                        <input
+                          className="authInput aiFileInputPlain"
+                          type="file"
+                          accept="application/pdf"
+                          disabled={vaultBusy !== false || nameSlayerBusy !== false}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            void openNameSlayerPdf(file);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <div className="hintTiny">PDFs are processed locally in the browser. Only the cleaned text is saved to the Vault.</div>
+                    <div className="aiRequirementSlot aiRequirementSlotEmpty" aria-hidden="true" />
+                    <label className="addField aiUploadTextWrap">
+                      <span className="addLabel">Or paste text</span>
                       <textarea
                         className="authInput controlCenterTextarea"
                         value={vaultText}
@@ -7751,7 +8634,7 @@ function PatientPage({
                         placeholder="Paste or type text to store in Vault (.txt)"
                       />
                     </label>
-                    <div className="addField aiVaultUploadWrap">
+                    <div className="aiVaultUploadWrap">
                       <button
                         className="btn aiVaultUploadFab"
                         disabled={vaultBusy !== false || !vaultText.trim()}
@@ -7767,49 +8650,55 @@ function PatientPage({
 
                 <div className="aiCol aiColGenerate">
                   <div className="sectionTitle aiColTitle">Generate Note</div>
-                  <div className="addGrid" style={{ marginTop: 12 }}>
-                    <label className="addField" style={{ marginTop: "28px" }}>
-                      <select className="select" value={aiNoteType} onChange={(e) => setAiNoteType(e.target.value as AiNoteType)}>
-                        <option value="problem_list">Problem List</option>
-                        <option value="problem_list_review">Problem List Review</option>
-                        <option value="problem_list_note">Problem List Note</option>
-                        <option value="treatment_plan">Treatment Plan</option>
-                        <option value="medical_necessity_note">Medical Necessity Note</option>
-                        <option value="discharge_summary">Discharge Form</option>
-                        <option value="discharge_note">Discharge Note</option>
-                      </select>
-                    </label>
-                    {aiNoteType === "problem_list_review" ? (
-                      <div className="hintTiny" style={{ gridColumn: "1 / -1" }}>
-                        Problem List Review will ask what was added and what was completed before generation.
-                      </div>
-                    ) : null}
-                    {aiNoteType === "problem_list" && !hasVaultAssessment ? (
-                      <div className="hintTiny" style={{ gridColumn: "1 / -1" }}>
-                        Problem List requires at least one <strong>Assessment</strong> file or text note in AI Vault first.
-                      </div>
-                    ) : null}
-                    {aiNoteType === "problem_list_note" && (!hasVaultAssessment || !hasVaultProblemList) ? (
-                      <div className="hintTiny" style={{ gridColumn: "1 / -1" }}>
-                        Problem List Note requires both <strong>Assessment</strong> and <strong>Problem List</strong> in AI Vault first.
-                      </div>
-                    ) : null}
-                    {aiNoteType === "problem_list_review" && (!hasVaultAssessment || !hasVaultProblemList) ? (
-                      <div className="hintTiny" style={{ gridColumn: "1 / -1" }}>
-                        Problem List Review requires both <strong>Assessment</strong> and <strong>Problem List</strong> in AI Vault first.
-                      </div>
-                    ) : null}
-                    {aiNoteType === "treatment_plan" && (!hasVaultAssessment || !hasVaultProblemList) ? (
-                      <div className="hintTiny" style={{ gridColumn: "1 / -1" }}>
-                        Treatment Plan requires both <strong>Assessment</strong> and <strong>Problem List</strong> in AI Vault first.
-                      </div>
-                    ) : null}
-                    {aiNoteType === "treatment_plan" && hasVaultAssessment && hasVaultProblemList && !hasVaultSession ? (
-                      <div className="hintTiny" style={{ gridColumn: "1 / -1" }}>
-                        Session upload is optional but recommended for stronger Treatment Plan detail.
-                      </div>
-                    ) : null}
-                    <label className="addField aiGenerateTextWrap" style={{ gridColumn: "1 / -1", marginTop: "72px" }}>
+                  <div className="aiPanelBody">
+                    <div className="aiControlRow aiGenerateControlRow">
+                      <label className="addField aiDocTypeField">
+                        <span className="addLabel">Note type</span>
+                        <select className="select" value={aiNoteType} onChange={(e) => setAiNoteType(e.target.value as AiNoteType)}>
+                          <option value="problem_list">Problem List</option>
+                          <option value="problem_list_review">Problem List Review</option>
+                          <option value="problem_list_note">Problem List Note</option>
+                          <option value="treatment_plan">Treatment Plan</option>
+                          <option value="medical_necessity_note">Medical Necessity Note</option>
+                          <option value="discharge_summary">Discharge Form</option>
+                          <option value="discharge_note">Discharge Note</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="aiRequirementSlot">
+                      {aiNoteType === "problem_list_review" ? (
+                        <div className="hintTiny aiRequirementHint">
+                          Problem List Review will ask what was added and what was completed before generation.
+                        </div>
+                      ) : null}
+                      {aiNoteType === "problem_list" && !hasVaultAssessment ? (
+                        <div className="hintTiny aiRequirementHint">
+                          Problem List requires at least one <strong>&nbsp;Assessment&nbsp;</strong> file or text note in AI Vault first.
+                        </div>
+                      ) : null}
+                      {aiNoteType === "problem_list_note" && (!hasVaultAssessment || !hasVaultProblemList) ? (
+                        <div className="hintTiny aiRequirementHint">
+                          Problem List Note requires both <strong>&nbsp;Assessment&nbsp;</strong> and <strong>&nbsp;Problem List&nbsp;</strong> in AI Vault first.
+                        </div>
+                      ) : null}
+                      {aiNoteType === "problem_list_review" && (!hasVaultAssessment || !hasVaultProblemList) ? (
+                        <div className="hintTiny aiRequirementHint">
+                          Problem List Review requires both <strong>&nbsp;Assessment&nbsp;</strong> and <strong>&nbsp;Problem List&nbsp;</strong> in AI Vault first.
+                        </div>
+                      ) : null}
+                      {aiNoteType === "treatment_plan" && (!hasVaultAssessment || !hasVaultProblemList) ? (
+                        <div className="hintTiny aiRequirementHint">
+                          Treatment Plan requires both <strong>&nbsp;Assessment&nbsp;</strong> and <strong>&nbsp;Problem List&nbsp;</strong> in AI Vault first.
+                        </div>
+                      ) : null}
+                      {aiNoteType === "treatment_plan" && hasVaultAssessment && hasVaultProblemList && !hasVaultSession ? (
+                        <div className="hintTiny aiRequirementHint">
+                          Session upload is optional but recommended for stronger Treatment Plan detail.
+                        </div>
+                      ) : null}
+                    </div>
+                    <label className="addField aiGenerateTextWrap">
+                      <span className="addLabel">Generated note</span>
                       <textarea
                         className="authInput controlCenterTextarea"
                         value={aiGeneratedNote}
@@ -7895,6 +8784,88 @@ function PatientPage({
           ) : null}
         </div>
       </div>
+      {nameSlayerOpen ? (
+        <div className="modalOverlay" onClick={closeNameSlayerModal}>
+          <div className="modalCard redactionModalCard" onClick={(event) => event.stopPropagation()}>
+            <div className="modalHead">
+              <div className="modalTitle">Name Slayer</div>
+              <button className="modalClose" onClick={closeNameSlayerModal}>✕</button>
+            </div>
+            <div className="modalBody redactionModalBody">
+              {nameSlayerStage === "splash" ? (
+                <div className="redactionSplash" aria-label="Name Slayer splash screen">
+                  <img className="redactionSplashLogo" src="/name-slayer-logo.svg" alt="Name Slayer" />
+                  <div className="redactionSplashTitle">Name Slayer</div>
+                  <div className="redactionSplashSub">{nameSlayerStatus || "Processing locally..."}</div>
+                </div>
+              ) : (
+                <>
+                  <div className="hintTiny">Review required. Automatic PHI removal may miss information.</div>
+                  <div className="hintTiny">
+                    Patient name is automatically redacted from the current document. Use the box below for any other repeated names or terms.
+                  </div>
+                  <label className="addField">
+                    <span className="addLabel">Extra names or terms to redact</span>
+                    <div className="nameSlayerExtraRow">
+                      <input
+                        className="authInput"
+                        value={nameSlayerExtraTermInput}
+                        onChange={(event) => setNameSlayerExtraTermInput(event.target.value)}
+                        placeholder={patient.displayName ? `e.g. ${patient.displayName.split(" ")[0]}` : "e.g. first name, spouse name"}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          applyNameSlayerExtraTerms();
+                        }}
+                      />
+                      <button className="btn ghost" onClick={applyNameSlayerExtraTerms} disabled={nameSlayerBusy !== false}>
+                        Redact
+                      </button>
+                    </div>
+                  </label>
+                  <div className="redactionMeta">
+                    {nameSlayerFileName ? `File: ${nameSlayerFileName}` : "Local file"}
+                    {nameSlayerStatus ? ` • ${nameSlayerStatus}` : ""}
+                  </div>
+                  <div className="redactionEditor">
+                    <div className="redactionEditorHead">
+                      <span className="redactionEditorTitle">Redacted document</span>
+                      <span className="redactionEditorHint">Click any missed word to redact it.</span>
+                    </div>
+                    <div className="redactionPreview" aria-label="Redacted text editor">
+                    {nameSlayerRedactedText ? (
+                      tokenizeNameSlayerText(nameSlayerRedactedText).map((token) => (
+                        <span
+                          key={`${token.start}-${token.end}-${token.text}`}
+                          className={token.text.trim() && !/\s/.test(token.text) ? "redactionToken" : "redactionSpace"}
+                          onClick={() =>
+                            token.text.trim() && !/\s/.test(token.text)
+                              ? setNameSlayerRedactedText((current) => redactNameSlayerRange(current, token.start, token.end))
+                              : null
+                          }
+                        >
+                          {token.text}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="placeholder">Redacted text will appear here.</span>
+                    )}
+                  </div>
+                  </div>
+                  <div className="nameSlayerFinalActions">
+                    <button className="btn ghost" onClick={() => void copyNameSlayerResult()} disabled={!nameSlayerRedactedText.trim()}>
+                      Copy
+                    </button>
+                    <button className="btn primary" onClick={() => void saveNameSlayerResultToVault()} disabled={nameSlayerBusy !== false || !nameSlayerRedactedText.trim()}>
+                      {nameSlayerBusy === "saving" ? "Saving..." : "Save to Vault"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {showSignalPicker ? (
         <div className="modalOverlay" onClick={() => setShowSignalPicker(false)}>
           <div className="modalCard" onClick={(event) => event.stopPropagation()}>
@@ -7973,14 +8944,18 @@ function PatientPage({
       )}
       {showHighlightModal && canHighlightPatient ? (
         <PatientHighlightModal
+          patientId={patient.id}
           patientName={patient.displayName}
+          patients={patientOptions}
+          counselorOptions={counselorOptions}
+          currentUserEmail={currentUserEmail}
           onClose={() => setShowHighlightModal(false)}
-          onSend={async ({ message, priority }) => {
-            const ok = await onSendHighlight({ message, priority });
-            if (ok) {
-              setShowHighlightModal(false);
-            }
-          }}
+            onSend={async ({ patientId, message, priority, recipientEmail }) => {
+            const ok = await onSendHighlight({ patientId, message, priority, recipientEmail });
+              if (ok) {
+                setShowHighlightModal(false);
+              }
+            }}
         />
       ) : null}
       {documentPreview && (
@@ -8149,7 +9124,13 @@ function DeletePatientModal({ dataClient, patient, onClose, onDeleted }: {
 
 /* ---- Intake option lists (mirrors intake.html) ---- */
 const LOCATION_OPTS  = ["Van Nuys", "Santa Clarita"];
-const LOC_PROGRAM_OPTS = ["1.0 Outpatient", "2.1 Intensive Outpatient"];
+const PRIMARY_PROGRAM_OPTS = [
+  "1.0 Outpatient",
+  "2.1 Intensive Outpatient",
+  "RSS",
+  "RSS+",
+  "Former Patient",
+];
 const REFERRING_AGENCY_OPTS = ["Self", "DCFS", "Court", "Other"];
 const MEDICAL_PHYS_APT_OPTS = ["Needed", "Scheduled", "Completed"];
 const MED_FORM_OPTS = ["Pending", "Turned in", "Not needed"];
@@ -8351,18 +9332,13 @@ function IntakeTab({ rawJson, ans, onRawJsonUpdate }: {
     setMultiModal({ title, opts, cur, onSave: fn });
   };
 
-  // Small helper: pencil button for section headers
-  const HeadEdit = ({ onClick }: { onClick: () => void }) =>
-    onRawJsonUpdate ? (
-      <button type="button" className="iEditBtn iEditBtnHead" onClick={onClick} title="Edit">✎</button>
-    ) : null;
-
   return (
     <div className="intakeTabWrap">
 
-      {/* ── Contact & Enrollment ── */}
+      {/* ── Patient Data ── */}
       <div className="iSection">
-        <div className="iHead iHead-blue">Contact & Enrollment</div>
+        <div className="iHead iHead-blue">Patient Data</div>
+        <div className="iSectionSubhead">Contact & Enrollment</div>
         <div className="iInfoGrid">
           <IInfoTile label="Cell"           value={cell}      onSave={pf("s5", "Cell phone")} />
           <IInfoTile label="Home phone"     value={homePhone} onSave={pf("s5", "Home phone")} />
@@ -8375,44 +9351,7 @@ function IntakeTab({ rawJson, ans, onRawJsonUpdate }: {
           <IInfoTile label="Language"       value={language}  onSave={pr("language")} options={LANGUAGE_OPTS} />
           {submittedAt && <IInfoTile label="Submitted" value={new Date(submittedAt).toLocaleDateString()} />}
         </div>
-      </div>
-
-      {/* ── Substances & MAT ── */}
-      <div className="iSection">
-        <div className="iHead iHead-orange">
-          Substances & MAT
-          <HeadEdit onClick={() => openMulti("Substances", SUBSTANCE_OPTS, "substances", substances)} />
-        </div>
-        {substances.length > 0
-          ? <div className="iChips">{substances.map(s => <span key={s} className="iChip iSub">{s}</span>)}</div>
-          : <span className="iDimLabel">—</span>}
-        <div className="iMatRow">
-          <span className="iDimLabel">Medication-Assisted Treatment</span>
-          {editingMat ? (
-            <select className="iEditSelect" value={matDraft}
-              onChange={e => { pr("mat")?.(e.target.value); setEditingMat(false); }}
-              onBlur={() => setEditingMat(false)}
-              autoFocus
-            >
-              <option value="">—</option>
-              {MAT_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
-          ) : (
-            <>
-              {mat ? <span className={`iMatBadge ${matClass}`}>{mat}</span>
-                   : <span className="iMatBadge iMatNo">—</span>}
-              {onRawJsonUpdate && (
-                <button type="button" className="iEditBtn" style={{ opacity: 0.55 }} title="Edit MAT"
-                  onClick={() => { setMatDraft(mat); setEditingMat(true); }}>✎</button>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* ── Demographics ── */}
-      <div className="iSection">
-        <div className="iHead iHead-purple">Demographics</div>
+        <div className="iSectionSubhead" style={{ marginTop: 14 }}>Demographics</div>
         <div className="iDemoGrid">
           <IDemoItem label="Sex at birth"             value={sex}        onSave={pr("sex")}            options={SEX_OPTS} />
           <IDemoItem label="Pregnant / breastfeeding" value={preg}       onSave={pr("preg")}           options={PREG_OPTS} />
@@ -8420,86 +9359,113 @@ function IntakeTab({ rawJson, ans, onRawJsonUpdate }: {
           <IDemoItem label="Orientation"              value={orient}     onSave={pr("orient")}         options={ORIENT_OPTS} />
           <IDemoItem label="Marital status"           value={marital}    onSave={pr("marital_status")} options={MARITAL_OPTS} />
           <IDemoItem label="Ethnicity"                value={ethnicity}  onSave={pr("ethnicity")}      options={ETHNICITY_OPTS} />
+          <IDemoItem label="Race"                     value={race.join(", ")} onSave={(next) => pm("race")?.(next ? [next] : [])} options={RACE_OPTS} />
           <IDemoItem label="Veteran"                  value={veteran}    onSave={pr("veteran")}        options={VETERAN_OPTS} />
           <IDemoItem label="Employment"               value={employment} onSave={pr("employment")}     options={EMPLOY_OPTS} />
         </div>
-        <div className="iRaceRow">
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span className="iDimLabel">Race</span>
-            <HeadEdit onClick={() => openMulti("Race", RACE_OPTS, "race", race)} />
+        <div className="iSectionSubhead" style={{ marginTop: 14 }}>Add-ons</div>
+        <div className="iSectionGroup">
+          <div className="iSubGroup">
+            <div className="iHead iHead-orange">
+              Substances & MAT
+              <HeadEdit enabled={Boolean(onRawJsonUpdate)} onClick={() => openMulti("Substances", SUBSTANCE_OPTS, "substances", substances)} />
+            </div>
+            {substances.length > 0
+              ? <div className="iChips">{substances.map(s => <span key={s} className="iChip iSub">{s}</span>)}</div>
+              : <span className="iDimLabel">—</span>}
+            <div className="iMatRow">
+              <span className="iDimLabel">Medication-Assisted Treatment</span>
+              {editingMat ? (
+                <IntakeChoiceSelect
+                  value={matDraft}
+                  options={MAT_OPTS}
+                  onChange={(next) => {
+                    pr("mat")?.(next);
+                    setEditingMat(false);
+                  }}
+                />
+              ) : (
+                <>
+                  {mat ? <span className={`iMatBadge ${matClass}`}>{mat}</span>
+                       : <span className="iMatBadge iMatNo">—</span>}
+                  {onRawJsonUpdate && (
+                    <button type="button" className="iEditBtn" style={{ opacity: 0.55 }} title="Edit MAT"
+                      onClick={() => { setMatDraft(mat); setEditingMat(true); }}>✎</button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
-          <div className="iChips">
-            {race.length > 0
-              ? race.map(r => <span key={r} className="iChip iRace">{r}</span>)
+
+          <div className="iSubGroup">
+            <div className="iHead iHead-purple">
+              Demographics Add-on
+            </div>
+            <div className="iDimLabel" style={{ marginTop: 6 }}>Race is editable in Demographics above.</div>
+          </div>
+
+          <div className="iSubGroup">
+            <div className="iHead iHead-green">
+              Public Assistance
+              <HeadEdit enabled={Boolean(onRawJsonUpdate)} onClick={() => openMulti("Public Assistance", ASSIST_OPTS, "public_assistance",
+                [...publicAssist, ...(getMulti(ans, "public_assistance").filter(a => a === "None"))])} />
+            </div>
+            {publicAssist.length > 0
+              ? <div className="iChips">{publicAssist.map(a => <span key={a} className="iChip iAssist">{a}</span>)}</div>
               : <span className="iDimLabel">—</span>}
           </div>
-        </div>
-      </div>
 
-      {/* ── Public Assistance ── */}
-      <div className="iSection">
-        <div className="iHead iHead-green">
-          Public Assistance
-          <HeadEdit onClick={() => openMulti("Public Assistance", ASSIST_OPTS, "public_assistance",
-            [...publicAssist, ...(getMulti(ans, "public_assistance").filter(a => a === "None"))])} />
-        </div>
-        {publicAssist.length > 0
-          ? <div className="iChips">{publicAssist.map(a => <span key={a} className="iChip iAssist">{a}</span>)}</div>
-          : <span className="iDimLabel">—</span>}
-      </div>
-
-      {/* ── Accommodations & Advance Directive ── */}
-      <div className="iSection">
-        <div className="iHead iHead-teal">Accommodations & Directives</div>
-        <div className="iDemoGrid" style={{ marginBottom: 12 }}>
-          <IDemoItem label="Accommodations needed"    value={accommodations} onSave={pr("accommodations")}   options={YN_OPTS} />
-          <IDemoItem label="Advance directive on file" value={advanceDir}   onSave={pr("advance_directive")} options={YN_OPTS} />
-        </div>
-        {accommodations === "Yes" && (
-          <div className="iNoteBlock">
-            <div className="iNoteTitle" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              Accommodations list
-              <HeadEdit onClick={() => openMulti("Accommodations", ACCOM_OPTS, "accommodations_list", accommodationsList)} />
+          <div className="iSubGroup">
+            <div className="iHead iHead-teal">Accommodations & Directives</div>
+            <div className="iDemoGrid" style={{ marginBottom: 12 }}>
+              <IDemoItem label="Accommodations needed"    value={accommodations} onSave={pr("accommodations")}   options={YN_OPTS} />
+              <IDemoItem label="Advance directive on file" value={advanceDir}   onSave={pr("advance_directive")} options={YN_OPTS} />
             </div>
-            {accommodationsList.length > 0 && (
-              <div className="iChips" style={{ marginTop: 6 }}>
-                {accommodationsList.map(a => <span key={a} className="iChip iAccom">{a}</span>)}
+            {accommodations === "Yes" && (
+              <div className="iNoteBlock">
+                <div className="iNoteTitle" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  Accommodations list
+                  <HeadEdit enabled={Boolean(onRawJsonUpdate)} onClick={() => openMulti("Accommodations", ACCOM_OPTS, "accommodations_list", accommodationsList)} />
+                </div>
+                {accommodationsList.length > 0 && (
+                  <div className="iChips" style={{ marginTop: 6 }}>
+                    {accommodationsList.map(a => <span key={a} className="iChip iAccom">{a}</span>)}
+                  </div>
+                )}
+                {accomDetail && <div className="iNoteBody">{accomDetail}</div>}
               </div>
             )}
-            {accomDetail && <div className="iNoteBody">{accomDetail}</div>}
+            {advanceDir === "Yes" && (
+              <div className="iNoteBlock" style={{ marginTop: accommodations === "Yes" ? 10 : 0 }}>
+                <div className="iNoteTitle">Advance Healthcare Directive on file ✓</div>
+                {advanceDirDetail && <div className="iNoteBody">{advanceDirDetail}</div>}
+              </div>
+            )}
           </div>
-        )}
-        {advanceDir === "Yes" && (
-          <div className="iNoteBlock" style={{ marginTop: accommodations === "Yes" ? 10 : 0 }}>
-            <div className="iNoteTitle">Advance Healthcare Directive on file ✓</div>
-            {advanceDirDetail && <div className="iNoteBody">{advanceDirDetail}</div>}
-          </div>
-        )}
-      </div>
 
-      {/* ── Emergency Contact ── */}
-      <div className="iSection">
-        <div className="iHead iHead-gray">Emergency Contact</div>
-        <div className="iInfoGrid">
-          <IInfoTile label="Name"         value={ecName}  onSave={pf("s18", "Full name")} />
-          <IInfoTile label="Relationship" value={ecRel}   onSave={pf("s18", "Relationship")} />
-          <IInfoTile label="Address"      value={ecAddr}  onSave={pf("s18", "Address")} />
-          <IInfoTile label="Phone"        value={ecPhone} onSave={pf("s18", "Phone number")} />
-        </div>
-      </div>
-
-      {/* ── Court / Legal ── */}
-      <div className="iSection">
-        <div className="iHead iHead-amber">
-          Court / Care Coordination
-          <HeadEdit onClick={() => openMulti("Court / Care Coordination", COURT_OPTS, "court_involvement", courtInvolvement)} />
-        </div>
-        {courtInvolvement.filter(c => c !== "None").length > 0 && (
-          <div className="iChips" style={{ marginBottom: 8 }}>
-            {courtInvolvement.filter(c => c !== "None").map(c => <span key={c} className="iChip iSub">{c}</span>)}
+          <div className="iSubGroup">
+            <div className="iHead iHead-gray">Emergency Contact</div>
+            <div className="iInfoGrid">
+              <IInfoTile label="Name"         value={ecName}  onSave={pf("s18", "Full name")} />
+              <IInfoTile label="Relationship" value={ecRel}   onSave={pf("s18", "Relationship")} />
+              <IInfoTile label="Address"      value={ecAddr}  onSave={pf("s18", "Address")} />
+              <IInfoTile label="Phone"        value={ecPhone} onSave={pf("s18", "Phone number")} />
+            </div>
           </div>
-        )}
-        <IInfoTile label="Contact info" value={courtDetail} onSave={pf("s19", "Name, agency, phone or email (optional)")} />
+
+          <div className="iSubGroup">
+            <div className="iHead iHead-amber">
+              Court / Care Coordination
+              <HeadEdit enabled={Boolean(onRawJsonUpdate)} onClick={() => openMulti("Court / Care Coordination", COURT_OPTS, "court_involvement", courtInvolvement)} />
+            </div>
+            {courtInvolvement.filter(c => c !== "None").length > 0 && (
+              <div className="iChips" style={{ marginBottom: 8 }}>
+                {courtInvolvement.filter(c => c !== "None").map(c => <span key={c} className="iChip iSub">{c}</span>)}
+              </div>
+            )}
+            <IInfoTile label="Contact info" value={courtDetail} onSave={pf("s19", "Name, agency, phone or email (optional)")} />
+          </div>
+        </div>
       </div>
 
       {multiModal && (
@@ -8536,12 +9502,14 @@ function IInfoTile({ label, value, onSave, options }: {
       </div>
       {editing ? (
         options ? (
-          <select className="iEditSelect" value={draft} autoFocus
-            onChange={e => { if (onSave) onSave(e.target.value); setEditing(false); }}
-            onBlur={() => setEditing(false)}>
-            <option value="">—</option>
-            {options.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+          <IntakeChoiceSelect
+            value={draft}
+            options={options}
+            onChange={(next) => {
+              if (onSave) onSave(next);
+              setEditing(false);
+            }}
+          />
         ) : (
           <>
             <input className="iEditInput" value={draft} autoFocus
@@ -8596,12 +9564,14 @@ function IDemoItem({ label, value, onSave, options }: {
       </div>
       {editing ? (
         options ? (
-          <select className="iEditSelect" value={value} autoFocus
-            onChange={e => { onSave?.(e.target.value); setEditing(false); }}
-            onBlur={() => setEditing(false)}>
-            <option value="">—</option>
-            {options.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+          <IntakeChoiceSelect
+            value={value}
+            options={options}
+            onChange={(next) => {
+              onSave?.(next);
+              setEditing(false);
+            }}
+          />
         ) : (
           <>
             <input className="iEditInput" value={draft} autoFocus
@@ -9036,7 +10006,16 @@ function PublicGroupSignPage({
           <>
             <div className="authGrid">
               <label className="authLabel">Full Name</label>
-              <input className="authInput" value={name} onChange={(e) => setName(e.target.value)} placeholder="First Last" autoFocus />
+              <input
+                className="authInput"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="First Last"
+                autoComplete="off"
+                autoCapitalize="words"
+                spellCheck={false}
+                autoFocus
+              />
               <label className="authLabel">Signature</label>
               <div className="publicSignSignatureRow">
                 <button className="btn ghost" onClick={() => setSigOpen(true)}>
@@ -10182,7 +11161,7 @@ function BillingPage({
           <div className="workspaceSheetHead billingSheetHead">
             <div>Patient</div>
             <div>MRN</div>
-            <div>LOC</div>
+            <div>Program</div>
             {BILLING_SHEET_COLUMN_OPTS.map((option) => (
               <div key={option}>{option}</div>
             ))}
@@ -10274,18 +11253,10 @@ function AddPatientModal({
   onAdded: (p: Patient) => void;
 }) {
   const today = new Date().toISOString().substring(0, 10);
-  const statusOptions: Array<{ value: "new" | "current" | "rss_plus" | "rss" | "past"; label: string }> = [
-    { value: "new", label: "New Patient" },
-    { value: "current", label: "Current Patient" },
-    { value: "rss_plus", label: "RSS+" },
-    { value: "rss", label: "RSS" },
-    { value: "past", label: "Past Patient" },
-  ];
   const [form, setForm] = useState({
     full_name: "",
     mrn: "",
     date_of_birth: "",
-    status: "new" as "new" | "current" | "rss_plus" | "rss" | "past",
     location: "Van Nuys",
     intake_date: today,
     primary_program: "",
@@ -10333,7 +11304,7 @@ function AddPatientModal({
       full_name: form.full_name.trim(),
       mrn: form.mrn.trim() || null,
       date_of_birth: form.date_of_birth || null,
-      status: form.status,
+      status: "new",
       location: form.location || null,
       intake_date: form.intake_date || today,
       primary_program: form.primary_program.trim() || null,
@@ -10376,6 +11347,7 @@ function AddPatientModal({
                 referring_agency: form.referring_agency || "",
                 medical_eligibility: form.medical_eligibility || "",
                 mat: form.mat_status || "",
+                primary_program: form.primary_program || "",
               },
               multi: {
                 substances: form.drug_of_choice,
@@ -10419,7 +11391,7 @@ function AddPatientModal({
       displayName: record.full_name,
       mrn: record.mrn ?? undefined,
       dateOfBirth: record.date_of_birth ?? undefined,
-      kind: toPatientKind(record.status),
+      kind: derivePatientKind(record.primary_program, record.status, record.intake_date),
       intakeDate: record.intake_date,
       primaryProgram: record.primary_program ?? undefined,
       counselor: record.counselor_name ?? undefined,
@@ -10449,14 +11421,6 @@ function AddPatientModal({
               <input className="authInput" type="date" value={form.date_of_birth} onChange={f("date_of_birth")} />
             </label>
             <label className="addField">
-              <span className="addLabel">Status</span>
-              <select className="select" value={form.status} onChange={f("status")}>
-                {statusOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="addField">
               <span className="addLabel">Location</span>
               <select className="select" value={form.location} onChange={f("location")}>
                 <option>Van Nuys</option>
@@ -10471,7 +11435,7 @@ function AddPatientModal({
               <span className="addLabel">Primary program</span>
               <select className="select" value={form.primary_program} onChange={f("primary_program")}>
                 <option value="">Select program</option>
-                {LOC_PROGRAM_OPTS.map((program) => (
+                {PRIMARY_PROGRAM_OPTS.map((program) => (
                   <option key={program} value={program}>{program}</option>
                 ))}
               </select>
