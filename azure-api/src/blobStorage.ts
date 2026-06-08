@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { env } from "./config.js";
 
@@ -24,6 +25,38 @@ export async function uploadPatientDocumentPdf(input: {
   originalFileName: string;
   fileBuffer: Buffer;
 }) {
+  return uploadBufferToBlob({
+    patientId: input.patientId,
+    documentType: input.documentType,
+    originalFileName: input.originalFileName,
+    fileBuffer: input.fileBuffer,
+    contentType: "application/pdf",
+  });
+}
+
+export async function uploadVaultArtifact(input: {
+  patientId: string;
+  artifactType: string;
+  originalFileName: string;
+  fileBuffer: Buffer;
+  contentType: string;
+}) {
+  return uploadBufferToBlob({
+    patientId: input.patientId,
+    documentType: input.artifactType,
+    originalFileName: input.originalFileName,
+    fileBuffer: input.fileBuffer,
+    contentType: input.contentType,
+  });
+}
+
+async function uploadBufferToBlob(input: {
+  patientId: string;
+  documentType: string;
+  originalFileName: string;
+  fileBuffer: Buffer;
+  contentType: string;
+}) {
   const service = getBlobServiceClient();
   const containerName = sanitizeSegment(env.AZURE_BLOB_CONTAINER_NAME);
   const containerClient = service.getContainerClient(containerName);
@@ -35,7 +68,7 @@ export async function uploadPatientDocumentPdf(input: {
   const dd = String(now.getUTCDate()).padStart(2, "0");
   const timestamp = now.toISOString().replace(/[:.]/g, "-");
 
-  const extension = input.originalFileName.toLowerCase().endsWith(".pdf") ? ".pdf" : ".pdf";
+  const extension = path.extname(input.originalFileName) || (input.contentType.includes("json") ? ".json" : ".txt");
   const blobName = [
     sanitizeSegment(env.AZURE_BLOB_BASE_PATH),
     yyyy,
@@ -49,7 +82,7 @@ export async function uploadPatientDocumentPdf(input: {
   const blockBlobClient = containerClient.getBlockBlobClient(blobName);
   await blockBlobClient.uploadData(input.fileBuffer, {
     blobHTTPHeaders: {
-      blobContentType: "application/pdf",
+      blobContentType: input.contentType,
     },
   });
 

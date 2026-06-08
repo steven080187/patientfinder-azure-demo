@@ -353,9 +353,17 @@ async function main() {
          on conflict (patient_id) do update set
            drug_of_choice = excluded.drug_of_choice,
            updated_at = timezone('utc', now())`,
-        [patient.id, patient.roster_drug_of_choice]
+          [patient.id, patient.roster_drug_of_choice]
       );
     }
+
+    await client.query(
+      `delete from public.patient_documents
+        where patient_id = any($1::uuid[])
+          and document_type like 'vault:%'`,
+      [patients.map((patient) => patient.id)]
+    );
+
     const workbookPayload = {
       name: "patientbridge-live-roster-3-DOC-fixed",
       original_file_name: path.basename(defaultRosterPath),

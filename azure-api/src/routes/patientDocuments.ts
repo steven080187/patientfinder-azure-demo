@@ -580,8 +580,13 @@ async function readVaultTextDocuments(rows: PatientDocumentRow[]) {
   const blocks: string[] = [];
   for (const row of textDocs) {
     try {
-      const absolutePath = getVaultAbsolutePathFromBlobPath(row.storage_blob_path);
-      const text = await fs.readFile(absolutePath, "utf8");
+      const text =
+        row.storage_provider === "local_fs" && row.storage_container === "vault"
+          ? await fs.readFile(getVaultAbsolutePathFromBlobPath(row.storage_blob_path), "utf8")
+          : (await downloadBlobToBuffer({
+              containerName: row.storage_container,
+              blobName: row.storage_blob_path,
+            })).toString("utf8");
       const normalized = text.replace(/\r\n/g, "\n").trim().slice(0, 10_000);
       if (!normalized) continue;
       blocks.push(`FILE: ${row.original_filename}\n${normalized}`);
@@ -1435,11 +1440,11 @@ patientDocumentsRouter.delete(
     try {
       const dbStartedAt = Date.now();
       const rows = await query<
-        Pick<PatientDocumentRow, "id" | "storage_container" | "storage_blob_path">
+        Pick<PatientDocumentRow, "id" | "storage_provider" | "storage_container" | "storage_blob_path">
       >(
         `delete from public.patient_documents
           where id = $1
-          returning id, storage_container, storage_blob_path`,
+          returning id, storage_provider, storage_container, storage_blob_path`,
         [req.params.id]
       );
       const dbMs = Date.now() - dbStartedAt;
@@ -1458,10 +1463,17 @@ patientDocumentsRouter.delete(
       }
 
       const blobStartedAt = Date.now();
-      await deleteBlobIfExists({
-        containerName: deleted.storage_container,
-        blobName: deleted.storage_blob_path,
-      });
+      if (deleted.storage_provider === "local_fs" && deleted.storage_container === "vault") {
+        const localPath = getVaultAbsolutePathFromBlobPath(deleted.storage_blob_path);
+        await fs.unlink(localPath).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        });
+      } else {
+        await deleteBlobIfExists({
+          containerName: deleted.storage_container,
+          blobName: deleted.storage_blob_path,
+        });
+      }
       const blobMs = Date.now() - blobStartedAt;
 
       auditLog("patient_document_delete_ok", {
