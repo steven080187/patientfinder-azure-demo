@@ -30,7 +30,7 @@ import nameSlayerSeedRules from "./nameSlayerSeedRules.json";
 import { PatientBridgeWorkbookPage } from "./admin/PatientBridgeWorkbookPage";
 import "./App.css";
 
-const MOBILE_NAME_SLAYER_LOGO = "/name-slayer-mobile.jpg";
+const NAME_SLAYER_SPLASH_LOGO = "/name-slayer-mobile.jpg";
 
 if (typeof window !== "undefined" && !GlobalWorkerOptions.workerPort) {
   GlobalWorkerOptions.workerPort = new Worker(new URL("./pdf.worker.entry.ts", import.meta.url), { type: "module" });
@@ -3979,9 +3979,9 @@ export default function App() {
                   <button
                     className="workspaceMobileBrandLink"
                     onClick={() => setPrivacyLocked(true)}
-                    aria-label="Name Slayer logo"
+                    aria-label="patientfinder logo"
                   >
-                    <img className="workspaceMobileLogo" src={MOBILE_NAME_SLAYER_LOGO} alt="Name Slayer logo" />
+                    <img className="workspaceMobileLogo" src={patientFinderLogo} alt="patientfinder logo" />
                   </button>
                 </div>
 
@@ -8858,7 +8858,7 @@ function PatientPage({
             <div className="modalBody redactionModalBody">
               {nameSlayerStage === "splash" ? (
                 <div className="redactionSplash" aria-label="Name Slayer splash screen">
-                  <img className="redactionSplashLogo" src="/name-slayer-logo.svg" alt="Name Slayer" />
+                  <img className="redactionSplashLogo" src={NAME_SLAYER_SPLASH_LOGO} alt="Name Slayer" />
                   <div className="redactionSplashTitle">Name Slayer</div>
                   <div className="redactionSplashSub">{nameSlayerStatus || "Processing locally..."}</div>
                 </div>
