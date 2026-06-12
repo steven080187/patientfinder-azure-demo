@@ -30,6 +30,8 @@ import nameSlayerSeedRules from "./nameSlayerSeedRules.json";
 import { PatientBridgeWorkbookPage } from "./admin/PatientBridgeWorkbookPage";
 import "./App.css";
 
+const MOBILE_NAME_SLAYER_LOGO = "/name-slayer-mobile.jpg";
+
 if (typeof window !== "undefined" && !GlobalWorkerOptions.workerPort) {
   GlobalWorkerOptions.workerPort = new Worker(new URL("./pdf.worker.entry.ts", import.meta.url), { type: "module" });
 }
@@ -38,7 +40,7 @@ if (typeof window !== "undefined" && !GlobalWorkerOptions.workerPort) {
 
 type PatientKind = "New Patient" | "Current Patient" | "RSS+" | "RSS" | "Former Patient";
 type PatientKindFilter = "all" | PatientKind | "Former Recent" | "Former Archived";
-type ViewMode = "sheet" | "cards" | "split";
+type ViewMode = "sheet" | "split";
 type SortKey = "name" | "intake" | "lastVisit" | "kind";
 type WorkspaceTab = "roster" | "attention";
 
@@ -3977,9 +3979,9 @@ export default function App() {
                   <button
                     className="workspaceMobileBrandLink"
                     onClick={() => setPrivacyLocked(true)}
-                    aria-label="patientfinder logo"
+                    aria-label="Name Slayer logo"
                   >
-                    <img className="workspaceMobileLogo" src="/lockscreen.png" alt="patientfinder logo" />
+                    <img className="workspaceMobileLogo" src={MOBILE_NAME_SLAYER_LOGO} alt="Name Slayer logo" />
                   </button>
                 </div>
 
@@ -6183,7 +6185,7 @@ function SearchResults({
               <button className="modalClose" onClick={() => setFeaturedPatientsPickerOpen(false)}>✕</button>
             </div>
             <div className="modalBody">
-              <div className="hintTiny">Only selected patients will appear in this cards view.</div>
+              <div className="hintTiny">Only selected patients will appear in this filtered view.</div>
               <div className="multiCheckList" style={{ marginTop: 12, maxHeight: 360, overflow: "auto" }}>
                 {rows.map((patient) => {
                   const selected = featuredPatientIds.includes(normalizePatientId(patient.id));
