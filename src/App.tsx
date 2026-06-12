@@ -147,30 +147,6 @@ function SheetDiamondIcon() {
   );
 }
 
-function CardsDiamondIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect x="5" y="6" width="8" height="12" rx="2" />
-      <rect x="11" y="6" width="8" height="12" rx="2" />
-    </svg>
-  );
-}
-
-function MobileLayoutIcon({ cards }: { cards: boolean }) {
-  return cards ? (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect x="4" y="4" width="16" height="16" rx="3" />
-      <path d="M4 9h16M4 15h16" />
-    </svg>
-  ) : (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect x="4" y="4" width="16" height="16" rx="3" />
-      <path d="M11 4v16" />
-      <path d="M4 10h7M4 14h7M13 10h7M13 14h7" />
-    </svg>
-  );
-}
-
 function MobileSortIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -2116,6 +2092,13 @@ export default function App() {
   const [counselorThinList, setCounselorThinList] = useState(false);
   const [patientDocumentsTabActive, setPatientDocumentsTabActive] = useState(false);
   const [privacyLocked, setPrivacyLocked] = useState(true);
+  const mobileDashboardScaleKey = "patientfinder.mobile.dashboardScale.v1";
+  const [mobileDashboardScale, setMobileDashboardScale] = useState(() => {
+    if (typeof window === "undefined") return 1;
+    const raw = window.localStorage.getItem(mobileDashboardScaleKey);
+    const parsed = raw ? Number(raw) : 1;
+    return Number.isFinite(parsed) && parsed >= 0.85 && parsed <= 1.25 ? parsed : 1;
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileGlanceOpen, setMobileGlanceOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
@@ -2250,7 +2233,7 @@ export default function App() {
 
   useEffect(() => {
     if (view === "split") {
-      setView("cards");
+      setView("sheet");
       return;
     }
   }, [isMobileWorkspace, view]);
@@ -2263,6 +2246,11 @@ export default function App() {
     }, 15000);
     return () => window.clearInterval(interval);
   }, [privacyLocked]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(mobileDashboardScaleKey, String(mobileDashboardScale));
+  }, [mobileDashboardScale]);
 
   useEffect(() => {
     if (!isMobileWorkspace || privacyLocked) {
@@ -2809,8 +2797,9 @@ export default function App() {
   const mobileSearchPlaceholder = `Search by patient, sage ID, date, drug test, anything! • ${results.length} visible • ${patientTotal} total`;
   const lockCanvasScroll = workspaceTab === "roster";
 
-  const [selectedId, setSelectedId] = useState<string>(patients[0]?.id ?? "");
-  const selected = useMemo(() => results.find((p) => p.id === selectedId) ?? results[0], [results, selectedId]);
+  const [selectedId, setSelectedId] = useState<string | null>(patients[0]?.id ?? null);
+  const selectionClearedRef = useRef(false);
+  const selected = useMemo(() => (selectedId ? results.find((p) => p.id === selectedId) ?? null : null), [results, selectedId]);
   const caseLoadPatients = useMemo(
     () => patients.filter((patient) => patient.kind !== "Former Patient" && caseAssignments[patient.id] === counselorId),
     [patients, caseAssignments, counselorId]
@@ -3093,8 +3082,14 @@ export default function App() {
 
   useEffect(() => {
     if (!results.length) return;
+    if (!selectedId && selectionClearedRef.current) return;
     if (!selectedId || !results.some((p) => p.id === selectedId)) setSelectedId(results[0].id);
   }, [results, selectedId]);
+
+  const handleSelectPatient = (id: string | null) => {
+    selectionClearedRef.current = id === null;
+    setSelectedId(id);
+  };
 
   const goHome = () => {
     setSearch("");
@@ -3963,30 +3958,6 @@ export default function App() {
               <section className="workspaceMobileHero">
                 {!privacyLocked ? (
                   <button
-                    className={
-                      mobileMenuOpen
-                        ? "btn ghost active workspaceMobileMenuBtn workspaceMobileHeroMenuToggle"
-                        : hasUnreadHighlights
-                          ? "btn ghost workspaceMobileMenuBtn workspaceMobileHeroMenuToggle hasNotification"
-                          : "btn ghost workspaceMobileMenuBtn workspaceMobileHeroMenuToggle"
-                    }
-                    onClick={() => {
-                      setMobileMenuOpen((open) => !open);
-                      setMobileGlanceOpen(false);
-                      setMobileSearchOpen(false);
-                    }}
-                    title="Menu"
-                    aria-label="Menu"
-                  >
-                    <span aria-hidden="true">
-                      <MobileMenuIcon />
-                    </span>
-                    {hasUnreadHighlights ? <span className="menuNotificationDot" aria-hidden="true" /> : null}
-                  </button>
-                ) : null}
-
-                {!privacyLocked ? (
-                  <button
                     className={mobileGlanceOpen ? "btn ghost active workspaceMobileHeroGlanceToggle" : "btn ghost workspaceMobileHeroGlanceToggle"}
                     onClick={() => {
                       setMobileGlanceOpen((open) => !open);
@@ -4002,13 +3973,15 @@ export default function App() {
                   </button>
                 ) : null}
 
-                <button
-                  className="workspaceMobileBrandLink"
-                  onClick={() => setPrivacyLocked(true)}
-                  aria-label="patientfinder logo"
-                >
-                  <img className="workspaceMobileLogo" src={patientFinderLogo} alt="patientfinder logo" />
-                </button>
+                <div className="workspaceMobileBrand">
+                  <button
+                    className="workspaceMobileBrandLink"
+                    onClick={() => setPrivacyLocked(true)}
+                    aria-label="patientfinder logo"
+                  >
+                    <img className="workspaceMobileLogo" src="/lockscreen.png" alt="patientfinder logo" />
+                  </button>
+                </div>
 
                 {!privacyLocked ? (
                   <div className="workspaceMobileHeroSearchRow">
@@ -4027,24 +4000,32 @@ export default function App() {
                       placeholder={mobileSearchPlaceholder}
                     />
                     <button
-                      className={view === "sheet" ? "btn ghost active workspaceMobileHeroIconBtn" : "btn ghost workspaceMobileHeroIconBtn"}
-                      onClick={() => setView((current) => (current === "sheet" ? "cards" : "sheet"))}
-                      title={view === "sheet" ? "Sheet view" : "iPhone view"}
-                      aria-label={view === "sheet" ? "Sheet view" : "iPhone view"}
+                      className={desktopDropdownOpen === "sort" ? "btn ghost active workspaceMobileHeroIconBtn" : "btn ghost workspaceMobileHeroIconBtn"}
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        setDesktopDropdownOpen((current) => (current === "sort" ? null : "sort"));
+                      }}
+                      title={`Sort by: ${sortKey}`}
+                      aria-label={`Sort by: ${sortKey}`}
                     >
                       <span aria-hidden="true">
-                        <MobileLayoutIcon cards={view !== "sheet"} />
+                        <MobileSortIcon />
                       </span>
                     </button>
                     <div className="dropdownAnchor workspaceMobileHeroSortAnchor" ref={desktopSortDropdownRef}>
                       <button
-                        className={desktopDropdownOpen === "sort" ? "btn ghost active workspaceMobileHeroIconBtn" : "btn ghost workspaceMobileHeroIconBtn"}
-                        onClick={() => setDesktopDropdownOpen((current) => (current === "sort" ? null : "sort"))}
-                        title={`Sort by: ${sortKey}`}
-                        aria-label={`Sort by: ${sortKey}`}
+                        className="btn ghost workspaceMobileHeroIconBtn"
+                        onClick={() => {
+                          setMobileMenuOpen((open) => !open);
+                          setMobileGlanceOpen(false);
+                          setMobileSearchOpen(false);
+                          setDesktopDropdownOpen(null);
+                        }}
+                        title="Menu"
+                        aria-label="Menu"
                       >
                         <span aria-hidden="true">
-                          <MobileSortIcon />
+                          <MobileMenuIcon />
                         </span>
                       </button>
                       {desktopDropdownOpen === "sort" ? (
@@ -4104,6 +4085,32 @@ export default function App() {
                 {isMobileWorkspace && mobileMenuOpen ? (
                   <section className="workspaceMobileMenuCard">
                     <div className="workspaceMobileMenuGrid">
+                      <div className="workspaceMobileScaleRow">
+                        <button
+                          className="workspaceMobileScaleBtn"
+                          onClick={() => setMobileDashboardScale((scale) => Math.min(1.25, Number((scale + 0.05).toFixed(2))))}
+                          title="Increase font size"
+                          aria-label="Increase font size"
+                        >
+                          +
+                        </button>
+                        <button
+                          className="workspaceMobileScaleBtn"
+                          onClick={() => setMobileDashboardScale((scale) => Math.max(0.85, Number((scale - 0.05).toFixed(2))))}
+                          title="Decrease font size"
+                          aria-label="Decrease font size"
+                        >
+                          -
+                        </button>
+                        <button
+                          className="workspaceMobileScaleBtn ghost"
+                          onClick={() => setMobileDashboardScale(1)}
+                          title="Reset font size"
+                          aria-label="Reset font size"
+                        >
+                          Reset
+                        </button>
+                      </div>
                       <button
                         className={hasUnreadHighlights ? "workspaceActionBtn workspaceActionBtnGlow" : "workspaceActionBtn"}
                         onClick={() => {
@@ -4300,6 +4307,7 @@ export default function App() {
                         ? `workspaceBoard viewportLocked${view === "split" ? " splitMode" : ""}`
                         : "workspaceBoard"
                     }
+                    style={isMobileWorkspace ? ({ ["--mobile-dashboard-scale" as any]: mobileDashboardScale } as any) : undefined}
                   >
                     {(isMobileWorkspace ? mobileSearchOpen : true) ? (
                       <div className="workspaceFilters">
@@ -4382,18 +4390,10 @@ export default function App() {
                                 <button
                                   className={view === "sheet" ? "btn ghost workspaceGlanceBtn active" : "btn ghost workspaceGlanceBtn"}
                                   onClick={() => setView("sheet")}
-                                  title="Sheet view"
-                                  aria-label="Sheet view"
+                                  title="Live table view"
+                                  aria-label="Live table view"
                                 >
                                   <span className="diamondCtrlGlyph" aria-hidden="true"><SheetDiamondIcon /></span>
-                                </button>
-                                <button
-                                  className={view === "cards" ? "btn ghost workspaceGlanceBtn active" : "btn ghost workspaceGlanceBtn"}
-                                  onClick={() => setView("cards")}
-                                  title="Cards view"
-                                  aria-label="Cards view"
-                                >
-                                  <span className="diamondCtrlGlyph" aria-hidden="true"><CardsDiamondIcon /></span>
                                 </button>
                               </div>
                               <div className="workspaceResultsCount">
@@ -4441,8 +4441,8 @@ export default function App() {
                         counselorId={counselorId}
                         onUpdateCompliance={updateCompliance}
                         onUpdateRosterDetails={updateRosterDetails}
-                        selectedId={selected?.id}
-                        onSelect={setSelectedId}
+                        selectedId={selectedId}
+                        onSelect={handleSelectPatient}
                         onOpen={openPatient}
                         onShiftHighlight={(patient) =>
                           setHighlightTarget({
@@ -5142,11 +5142,11 @@ function SearchResults({
   counselorId: string;
   onUpdateCompliance: (patientId: string, patch: CompliancePatch) => void | Promise<void>;
   onUpdateRosterDetails: (patientId: string, patch: Partial<PatientRosterDetails>) => void | Promise<void>;
-  selectedId?: string;
-  onSelect: (id: string) => void;
+  selectedId?: string | null;
+  onSelect: (id: string | null) => void;
   onOpen: (id: string) => void;
   onShiftHighlight?: (patient: Patient) => void;
-  selected?: Patient;
+  selected?: Patient | null;
   isAdminView: boolean;
   highlightedPatientIds: Record<string, "normal" | "urgent">;
   renderPatientSheet: (patient: Patient) => React.ReactNode;
@@ -5167,6 +5167,7 @@ function SearchResults({
   const [featuredPatientsPickerOpen, setFeaturedPatientsPickerOpen] = useState(false);
   const [featuredPatientIds, setFeaturedPatientIds] = useState<string[]>([]);
   const [cardOrderPatientIds, setCardOrderPatientIds] = useState<string[]>([]);
+  const [selectedSheetColumn, setSelectedSheetColumn] = useState<string | null>(null);
   const cardExtrasKeyPrefix = "patientfinder.cards.extras.v1.";
   const cardFeaturedKey = `patientfinder.cards.featured.v1.${counselorId || "default"}`;
   const cardOrderKey = `patientfinder.cards.order.v1.${counselorId || "default"}`;
@@ -5184,6 +5185,10 @@ function SearchResults({
     if (label.startsWith("PL Update")) return "problemListUpdate" as const;
     if (label.startsWith("Tx Plan Update")) return "treatmentPlanUpdate" as const;
     return null;
+  };
+
+  const toggleSheetColumn = (columnKey: string) => {
+    setSelectedSheetColumn((current) => (current === columnKey ? null : columnKey));
   };
 
   useEffect(() => {
@@ -5354,13 +5359,13 @@ function SearchResults({
                 p.rosterDetails?.drugOfChoice
               );
               return (
-                <button
+                  <button
                   key={p.id}
-                  className={
-                    p.id === selectedId
-                      ? `workspaceSplitRow selected${getHighlightClass(p.id)}`
-                      : `workspaceSplitRow${getHighlightClass(p.id)}`
-                  }
+                className={
+                  p.id === selectedId
+                    ? `workspaceSplitRow selected${getHighlightClass(p.id)}`
+                    : `workspaceSplitRow${getHighlightClass(p.id)}`
+                }
                   onClick={(event) => {
                     if (event.shiftKey && onShiftHighlight) {
                       event.preventDefault();
@@ -5368,7 +5373,7 @@ function SearchResults({
                       onShiftHighlight(p);
                       return;
                     }
-                    onSelect(p.id);
+                    onSelect(selectedId === p.id ? null : p.id);
                   }}
                   onDoubleClick={() => onOpen(p.id)}
                   title="Double-click to open"
@@ -5484,29 +5489,48 @@ function SearchResults({
   }
 
   if (view === "sheet") {
+        const sheetColumns = [
+          { key: "name", label: "Client's Name" },
+          { key: "admit_date", label: "Admit Date" },
+          { key: "problem_list_date", label: "Problem List" },
+          { key: "treatment_plan_date", label: "Treatment Plan" },
+          { key: "next_up", label: "Next Up" },
+          { key: "last_problem_list_review", label: "Last PL Review" },
+          { key: "days_in_treatment", label: "Days in Treatment" },
+          { key: "medical_phys_apt", label: "Medical / Phys Apt." },
+          { key: "med_form_status", label: "Med Form" },
+          { key: "referring_agency", label: "Referring Agency" },
+          { key: "reauth_sapc", label: "Reauth SAP-C" },
+          { key: "medical_eligibility", label: "Medical Eligibility" },
+          { key: "mat_status", label: "MAT" },
+          { key: "therapy_track", label: "Therapy" },
+          { key: "notes", label: "Notes" },
+        ] as const;
         return (
         <>
         <div className={isAdminView ? "workspaceSheetWrap adminCompact" : "workspaceSheetWrap"}>
           <div
             className="workspaceSheet"
+            data-selected-column={selectedSheetColumn ?? ""}
             ref={sheetScrollRef}
           >
             <div className="workspaceSheetHead">
-              <div>Client's Name</div>
-              <div>Admit Date</div>
-              <div>Problem List</div>
-              <div>Treatment Plan</div>
-              <div>Next Up</div>
-              <div>Last PL Review</div>
-              <div>Days in Treatment</div>
-              <div>Medical / Phys Apt.</div>
-              <div>Med Form</div>
-              <div>Referring Agency</div>
-              <div>Reauth SAP-C</div>
-              <div>Medical Eligibility</div>
-              <div>MAT</div>
-              <div>Therapy</div>
-              <div>Notes</div>
+              {sheetColumns.map((column) => (
+                <div
+                  key={column.key}
+                  className="workspaceSheetHeadCell"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => toggleSheetColumn(column.key)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    toggleSheetColumn(column.key);
+                  }}
+                >
+                  {column.label}
+                </div>
+              ))}
             </div>
             {rows.map((p) => {
               const effectiveProblemListDate = complianceByPatient[p.id]?.problemListDate;
@@ -5550,11 +5574,11 @@ function SearchResults({
               return (
                 <button
                   key={p.id}
-                  className={
-                    p.id === selectedId
-                      ? `workspaceSheetRow ${rowTone} selected${getHighlightClass(p.id)}`
-                      : `workspaceSheetRow ${rowTone}${getHighlightClass(p.id)}`
-                  }
+                className={
+                  p.id === selectedId
+                    ? `workspaceSheetRow ${rowTone} selected${getHighlightClass(p.id)}`
+                    : `workspaceSheetRow ${rowTone}${getHighlightClass(p.id)}`
+                }
                   onClick={(event) => {
                     if (event.shiftKey && onShiftHighlight) {
                       event.preventDefault();
@@ -5562,7 +5586,7 @@ function SearchResults({
                       onShiftHighlight(p);
                       return;
                     }
-                    onSelect(p.id);
+                    onSelect(selectedId === p.id ? null : p.id);
                   }}
                   onDoubleClick={() => onOpen(p.id)}
                   title="Double-click to open"

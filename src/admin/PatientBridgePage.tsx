@@ -654,7 +654,7 @@ export function PatientBridgePage({
       {showSplash ? (
         <div className="patientBridgeSplash" aria-live="polite" aria-label="patientbridge loading splash">
           <div className="patientBridgeSplashCard">
-            <img className="patientBridgeSplashLogo" src="/patientbridge-logo.png" alt="patientbridge" />
+            <img className="patientBridgeSplashLogo" src="/patientbridgelogo.png" alt="patientbridge" />
           </div>
         </div>
       ) : null}

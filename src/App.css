@@ -1654,6 +1654,28 @@ body,
   gap: 10px;
 }
 
+.workspaceMobileScaleRow {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workspaceMobileScaleBtn {
+  min-height: 40px;
+  border-radius: 14px;
+  border: 1px solid var(--border-med);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.workspaceMobileScaleBtn.ghost {
+  background: transparent;
+}
+
 .workspaceMobileFilterRow {
   display: flex;
   flex-wrap: nowrap;
@@ -2652,8 +2674,14 @@ body,
 .workspaceSplitRow.selected,
 .workspaceTableRow.selected,
 .workspaceRosterTile.selected {
-  border-color: var(--border-strong);
-  background: var(--bg-row-active);
+  border-color: color-mix(in srgb, #ffcc29 36%, var(--border-strong));
+  background:
+    linear-gradient(180deg, rgba(255, 204, 41, 0.10), rgba(255, 204, 41, 0.03)),
+    var(--bg-row-active);
+  box-shadow:
+    0 0 0 1px rgba(255, 204, 41, 0.18) inset,
+    0 0 0 1px rgba(255, 204, 41, 0.12),
+    0 0 18px rgba(255, 204, 41, 0.10);
 }
 
 .workspaceRosterTile.selected {
@@ -3217,12 +3245,19 @@ body,
 }
 
 .workspaceSheetRow.selected {
-  background: transparent;
-  box-shadow: none;
+  background:
+    linear-gradient(180deg, rgba(255, 204, 41, 0.10), rgba(255, 204, 41, 0.03)),
+    transparent;
+  box-shadow:
+    0 0 0 1px rgba(255, 204, 41, 0.16) inset,
+    0 0 0 1px rgba(255, 204, 41, 0.10),
+    0 0 18px rgba(255, 204, 41, 0.08);
 }
 
 .workspaceSheetRow.selected > div:first-child {
-  background: var(--bg-modal);
+  background:
+    linear-gradient(180deg, rgba(255, 204, 41, 0.10), rgba(255, 204, 41, 0.03)),
+    var(--bg-modal);
   box-shadow: 6px 0 0 var(--bg-modal), 8px 0 14px rgba(0, 0, 0, 0.22);
 }
 
@@ -3246,6 +3281,66 @@ body,
 .workspaceSheetHead > div {
   padding-inline: 5px;
   background: #111a24;
+}
+
+.workspaceSheetHeadCell {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: background-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+.workspaceSheetHeadCell:hover,
+.workspaceSheetHeadCell:focus-visible {
+  background: rgba(126, 207, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(126, 207, 255, 0.14);
+  outline: none;
+}
+
+.workspaceSheetHeadCell:focus-visible {
+  box-shadow:
+    inset 0 0 0 1px rgba(126, 207, 255, 0.18),
+    0 0 0 2px rgba(126, 207, 255, 0.18);
+}
+
+.workspaceSheet[data-selected-column="name"] .workspaceSheetHead > div:nth-child(1),
+.workspaceSheet[data-selected-column="name"] .workspaceSheetRow > div:nth-child(1),
+.workspaceSheet[data-selected-column="admit_date"] .workspaceSheetHead > div:nth-child(2),
+.workspaceSheet[data-selected-column="admit_date"] .workspaceSheetRow > div:nth-child(2),
+.workspaceSheet[data-selected-column="problem_list_date"] .workspaceSheetHead > div:nth-child(3),
+.workspaceSheet[data-selected-column="problem_list_date"] .workspaceSheetRow > div:nth-child(3),
+.workspaceSheet[data-selected-column="treatment_plan_date"] .workspaceSheetHead > div:nth-child(4),
+.workspaceSheet[data-selected-column="treatment_plan_date"] .workspaceSheetRow > div:nth-child(4),
+.workspaceSheet[data-selected-column="next_up"] .workspaceSheetHead > div:nth-child(5),
+.workspaceSheet[data-selected-column="next_up"] .workspaceSheetRow > div:nth-child(5),
+.workspaceSheet[data-selected-column="last_problem_list_review"] .workspaceSheetHead > div:nth-child(6),
+.workspaceSheet[data-selected-column="last_problem_list_review"] .workspaceSheetRow > div:nth-child(6),
+.workspaceSheet[data-selected-column="days_in_treatment"] .workspaceSheetHead > div:nth-child(7),
+.workspaceSheet[data-selected-column="days_in_treatment"] .workspaceSheetRow > div:nth-child(7),
+.workspaceSheet[data-selected-column="medical_phys_apt"] .workspaceSheetHead > div:nth-child(8),
+.workspaceSheet[data-selected-column="medical_phys_apt"] .workspaceSheetRow > div:nth-child(8),
+.workspaceSheet[data-selected-column="med_form_status"] .workspaceSheetHead > div:nth-child(9),
+.workspaceSheet[data-selected-column="med_form_status"] .workspaceSheetRow > div:nth-child(9),
+.workspaceSheet[data-selected-column="referring_agency"] .workspaceSheetHead > div:nth-child(10),
+.workspaceSheet[data-selected-column="referring_agency"] .workspaceSheetRow > div:nth-child(10),
+.workspaceSheet[data-selected-column="reauth_sapc"] .workspaceSheetHead > div:nth-child(11),
+.workspaceSheet[data-selected-column="reauth_sapc"] .workspaceSheetRow > div:nth-child(11),
+.workspaceSheet[data-selected-column="medical_eligibility"] .workspaceSheetHead > div:nth-child(12),
+.workspaceSheet[data-selected-column="medical_eligibility"] .workspaceSheetRow > div:nth-child(12),
+.workspaceSheet[data-selected-column="mat_status"] .workspaceSheetHead > div:nth-child(13),
+.workspaceSheet[data-selected-column="mat_status"] .workspaceSheetRow > div:nth-child(13),
+.workspaceSheet[data-selected-column="therapy_track"] .workspaceSheetHead > div:nth-child(14),
+.workspaceSheet[data-selected-column="therapy_track"] .workspaceSheetRow > div:nth-child(14),
+.workspaceSheet[data-selected-column="notes"] .workspaceSheetHead > div:nth-child(15),
+.workspaceSheet[data-selected-column="notes"] .workspaceSheetRow > div:nth-child(15) {
+  background:
+    linear-gradient(180deg, rgba(126, 207, 255, 0.11), rgba(126, 207, 255, 0.04)),
+    color-mix(in srgb, #111a24 82%, var(--bg-modal) 18%);
+  box-shadow:
+    inset 0 0 0 1px rgba(126, 207, 255, 0.16),
+    0 0 0 1px rgba(126, 207, 255, 0.10);
 }
 
 .workspaceSheetRow > div {
@@ -3960,15 +4055,15 @@ body,
 @media (max-width: 720px) {
   .page {
     padding:
-      calc(env(safe-area-inset-top, 0px) + 12px)
-      12px
+      0
+      0
       calc(env(safe-area-inset-bottom, 0px) + 22px);
   }
 
   .workspacePage {
     padding:
-      calc(env(safe-area-inset-top, 0px) + 12px)
-      12px
+      0
+      0
       calc(env(safe-area-inset-bottom, 0px) + 16px);
   }
 
@@ -3989,8 +4084,8 @@ body,
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 14px;
-    border-radius: 24px;
+    padding: 8px 6px;
+    border-radius: 22px;
     border: 1px solid var(--border);
     background: var(--bg-card);
     box-shadow: var(--shadow-card);
@@ -3998,19 +4093,25 @@ body,
   }
 
   .workspaceMobileBrand {
-    padding: 14px 16px 12px;
-    border-radius: 20px;
+    padding: 8px 8px 6px;
+    border-radius: 18px;
+    position: sticky;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    z-index: 8;
+    align-self: stretch;
+    background: color-mix(in srgb, var(--bg-card) 90%, transparent 10%);
+    backdrop-filter: blur(8px);
   }
 
   .workspaceMobileLogo {
-    width: min(100%, 210px);
+    width: min(100%, 150px);
   }
 
   .workspaceMobileBrandLink {
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: min(100%, 280px);
+    width: 100%;
     margin: 0 auto;
     padding: 0;
     border: 0;
@@ -4050,17 +4151,17 @@ body,
 
   .workspaceBoard,
   .workspaceAgendaCard {
-    padding-left: 14px;
-    padding-right: 14px;
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .workspaceRosterHead {
-    padding: 16px 14px;
+    padding: 10px 6px;
   }
 
   .workspaceSplitList,
   .workspacePreviewBody {
-    padding: 14px;
+    padding: 6px;
   }
 
   .workspaceTileGrid {
@@ -4251,6 +4352,10 @@ body,
 
   .workspaceBoard {
     margin-top: 0;
+    --mobile-dashboard-scale: 1;
+    transform: scale(var(--mobile-dashboard-scale));
+    transform-origin: top left;
+    width: calc(100% / var(--mobile-dashboard-scale));
   }
 
   .workspacePrivacyCard {

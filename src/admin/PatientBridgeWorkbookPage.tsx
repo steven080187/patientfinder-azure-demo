@@ -539,13 +539,13 @@ export function PatientBridgeWorkbookPage({
       {showSplash ? (
         <div className="patientBridgeSplash" aria-live="polite" aria-label="patientbridge loading splash">
           <div className="patientBridgeSplashCard">
-            <img className="patientBridgeSplashLogo" src="/patientbridge-logo.png" alt="patientbridge" />
+            <img className="patientBridgeSplashLogo" src="/patientbridgelogo.png" alt="patientbridge" />
           </div>
         </div>
       ) : null}
       <div className="patientBridgeTopBar">
         <div className="patientBridgeBrandBlock">
-          <img className="patientBridgeLogo" src="/patientbridge-logo.png" alt="patientbridge" />
+          <img className="patientBridgeLogo" src="/patientbridgelogo.png" alt="patientbridge" />
           <div className="patientBridgeBrandCopy">
             <div className="patientBridgeBrandName">patientbridge</div>
             <div className="patientBridgeBrandMeta">{workbookLabel}</div>
