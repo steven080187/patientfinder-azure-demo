@@ -3994,6 +3994,7 @@ body,
     border: 1px solid var(--border);
     background: var(--bg-card);
     box-shadow: var(--shadow-card);
+    align-items: center;
   }
 
   .workspaceMobileBrand {
@@ -4009,7 +4010,8 @@ body,
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 100%;
+    width: min(100%, 280px);
+    margin: 0 auto;
     padding: 0;
     border: 0;
     background: transparent;
@@ -4082,9 +4084,9 @@ body,
   }
 
   .workspaceSheetHead {
-    position: static !important;
-    top: auto !important;
-    z-index: auto !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 80 !important;
   }
 
   .billingSheetHead {
@@ -4094,16 +4096,111 @@ body,
   }
 
   .workspaceSheet {
-    overflow-y: visible;
+    overflow-y: auto;
+    overflow-x: auto;
   }
 
   .workspaceSheetHead,
   .billingSheetHead {
-    position: static !important;
-    top: auto !important;
+    position: sticky !important;
+    top: 0 !important;
     bottom: auto !important;
     left: auto !important;
     right: auto !important;
+  }
+
+  .workspaceBoard .workspaceSheetHead,
+  .workspaceBoard .workspaceSheetRow {
+    min-width: 1540px;
+    gap: 2px;
+  }
+
+  .workspaceBoard .workspaceSheetHead {
+    padding: 3px 4px;
+    font-size: 8px !important;
+    letter-spacing: 0.045em;
+  }
+
+  .workspaceBoard .workspaceSheetRow {
+    padding: 3px 4px;
+    margin-bottom: 2px;
+    font-size: 9px !important;
+  }
+
+  .workspaceSheetHead > div:first-child,
+  .workspaceSheetRow > div:first-child,
+  .workspaceSheetRow.selected > div:first-child,
+  .workspaceSheetRow.alert > div:first-child,
+  .workspaceSheetRow.watch > div:first-child {
+    position: static;
+    left: auto;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .workspaceSheetHead > div:first-child {
+    border-right: 0;
+  }
+
+  .workspaceSheetName {
+    gap: 1px;
+  }
+
+  .workspaceBoard .workspaceSheetName strong {
+    font-size: 10px !important;
+    line-height: 1.05;
+  }
+
+  .workspaceBoard .workspaceMetaInline {
+    gap: 0 3px;
+  }
+
+  .workspaceBoard .workspaceMetaText {
+    font-size: 8px;
+    letter-spacing: 0.01em;
+  }
+
+  .workspaceBoard .workspaceSheetHead > div:nth-child(2),
+  .workspaceBoard .workspaceSheetRow > div:nth-child(2),
+  .workspaceBoard .workspaceSheetHead > div:nth-child(3),
+  .workspaceBoard .workspaceSheetRow > div:nth-child(3),
+  .workspaceBoard .workspaceSheetHead > div:nth-child(4),
+  .workspaceBoard .workspaceSheetRow > div:nth-child(4),
+  .workspaceBoard .workspaceSheetHead > div:nth-child(5),
+  .workspaceBoard .workspaceSheetRow > div:nth-child(5),
+  .workspaceBoard .workspaceSheetHead > div:nth-child(6),
+  .workspaceBoard .workspaceSheetRow > div:nth-child(6) {
+    padding-inline: 1px;
+  }
+
+  .workspaceBoard .workspaceSheetHead > div:nth-child(2),
+  .workspaceBoard .workspaceSheetHead > div:nth-child(3),
+  .workspaceBoard .workspaceSheetHead > div:nth-child(4),
+  .workspaceBoard .workspaceSheetHead > div:nth-child(5),
+  .workspaceBoard .workspaceSheetHead > div:nth-child(6) {
+    font-size: 8px;
+  }
+
+  .workspaceBoard .workspaceSheetRow > div:nth-child(2) .workspaceTone,
+  .workspaceBoard .workspaceSheetRow > div:nth-child(3) .workspaceTone,
+  .workspaceBoard .workspaceSheetRow > div:nth-child(4) .workspaceTone,
+  .workspaceBoard .workspaceSheetRow > div:nth-child(5) .workspaceTone,
+  .workspaceBoard .workspaceSheetRow > div:nth-child(6) .workspaceTone {
+    font-size: 8px;
+    padding: 1px 3px;
+  }
+
+  .workspaceBoard .workspaceSetAction {
+    min-width: 28px;
+    max-width: 82px;
+    padding: 1px 4px;
+    font-size: 8px;
+  }
+
+  .workspaceBoard .workspaceSheetRow > div:nth-child(3) .workspaceSetAction,
+  .workspaceBoard .workspaceSheetRow > div:nth-child(4) .workspaceSetAction,
+  .workspaceBoard .workspaceSheetRow > div:nth-child(5) .workspaceSetAction {
+    max-width: 90px;
   }
 
   .workspaceSummaryItem {
@@ -4323,7 +4420,7 @@ body,
   position:absolute;
   top:calc(100% + 6px);
   right:0;
-  min-width:170px;
+  min-width:270px;
   border:1px solid color-mix(in srgb, #7ea7d9 38%, var(--border-med));
   border-radius:10px;
   background:color-mix(in srgb, var(--bg-card) 78%, #4f7fb9 22%);
@@ -4339,7 +4436,7 @@ body,
 
 .authRosterOption{
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   gap:8px;
   width:100%;
   border:1px solid transparent;
@@ -4351,6 +4448,7 @@ body,
   cursor:pointer;
   font-size:12px;
   font-weight:700;
+  line-height:1.25;
 }
 
 .authRosterOption:hover{
@@ -4378,6 +4476,132 @@ body,
   border:0;
   border-radius:0;
   padding:0;
+}
+
+.authRosterOption > span{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:0;
+  flex:1;
+}
+
+.authRosterOptionTitle{
+  font-size:12px;
+  font-weight:800;
+  color:inherit;
+}
+
+.authRosterOptionDesc{
+  font-size:11px;
+  font-weight:600;
+  color:var(--color-dim);
+}
+
+.authRosterCustom{
+  display:grid;
+  gap:8px;
+  padding:10px 8px 4px;
+  border-top:1px solid var(--border-med);
+  margin-top:4px;
+}
+
+.authRosterCustomLabel{
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  color:var(--color-dim);
+}
+
+.authRosterCustomInput{
+  width:100%;
+  box-sizing:border-box;
+  border:1px solid var(--border-med);
+  border-radius:8px;
+  background:var(--bg-input);
+  color:var(--color);
+  padding:8px 10px;
+  font:inherit;
+  font-size:12px;
+}
+
+.authRosterCustomInput:focus{
+  outline:none;
+  border-color:var(--border-strong);
+  box-shadow:0 0 0 2px color-mix(in srgb, var(--border-strong) 20%, transparent);
+}
+
+.authRosterCustomActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+
+.authRosterCustomError{
+  color:#ffb8b8;
+  font-size:11px;
+  line-height:1.35;
+}
+
+.authRosterHint{
+  display:grid;
+  gap:4px;
+  margin-top:2px;
+  padding:8px 10px;
+  border:1px solid var(--border-med);
+  border-radius:10px;
+  background: color-mix(in srgb, var(--bg-section) 60%, transparent);
+}
+
+.authRosterHintLine{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+.authRosterHintLabel{
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  color:var(--color);
+}
+
+.authRosterHintBadge{
+  display:inline-flex;
+  align-items:center;
+  border-radius:999px;
+  padding:3px 8px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:0.04em;
+  text-transform:uppercase;
+  color:var(--color);
+  background:var(--bg-panel-head);
+  border:1px solid var(--border-med);
+  white-space:nowrap;
+}
+
+.authRosterHintBadge.ready{
+  border-color: color-mix(in srgb, #7bbf93 40%, var(--border-med));
+  background: color-mix(in srgb, #2a4e3a 30%, var(--bg-panel-head));
+}
+
+.authRosterHintBadge.loading{
+  border-color: color-mix(in srgb, #7ea7d9 40%, var(--border-med));
+}
+
+.authRosterHintBadge.error{
+  border-color: color-mix(in srgb, #de7f7f 52%, var(--border-med));
+  background: color-mix(in srgb, #4a2626 32%, var(--bg-panel-head));
+}
+
+.authRosterHintDetail{
+  font-size:11px;
+  line-height:1.35;
+  color:var(--color-dim);
 }
 
 .authGrid{
@@ -7565,9 +7789,35 @@ button.trajectoryBadge {
   width: min(560px, 100%);
 }
 
+.publicSignCard .authBrand {
+  position: relative;
+  isolation: isolate;
+  padding: 12px 0 6px;
+  margin-bottom: 14px;
+}
+
+.publicSignCard .authBrand::before {
+  content: "";
+  position: absolute;
+  inset: -14px 8px -8px;
+  z-index: -1;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 50%,
+      rgba(255, 255, 255, 0.44) 0%,
+      rgba(255, 255, 255, 0.30) 24%,
+      rgba(255, 255, 255, 0.14) 50%,
+      rgba(255, 255, 255, 0.00) 76%);
+  filter: blur(24px);
+  opacity: 0.98;
+  pointer-events: none;
+}
+
 .publicSignCard .authLogo {
   filter: none;
   max-height: 160px;
+  position: relative;
+  z-index: 1;
 }
 
 .publicSignSignatureRow {

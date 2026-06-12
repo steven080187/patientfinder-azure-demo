@@ -70,9 +70,18 @@ const defaultAssessmentPath = process.env.PATIENTBRIDGE_ASSESSMENT_PATH ?? path.
 );
 
 const apiBaseUrl = (process.env.PATIENTBRIDGE_API_BASE_URL ?? "http://localhost:3001").replace(/\/+$/, "");
-const dbUrl = process.env.DATABASE_URL ?? "postgresql://steven@localhost:5432/patientfinder";
+const dbUrl = process.env.DATABASE_URL;
 const demoEmail = process.env.PATIENTBRIDGE_DEMO_EMAIL ?? "steven@ncadd-sfv.org";
 const demoPassword = process.env.PATIENTBRIDGE_DEMO_PASSWORD ?? "Demo123!";
+
+function getDatabaseName(connectionString: string) {
+  try {
+    const url = new URL(connectionString);
+    return url.pathname.replace(/^\/+/, "");
+  } catch {
+    return "";
+  }
+}
 
 function decodeXmlEntities(text: string) {
   return text
@@ -272,6 +281,15 @@ async function apiJson(pathname: string, token: string, init?: RequestInit) {
 }
 
 async function main() {
+  if (!dbUrl) {
+    throw new Error("DATABASE_URL is required and must point to a demo-only database.");
+  }
+
+  const databaseName = getDatabaseName(dbUrl);
+  if (databaseName === "patientfinder") {
+    throw new Error("Refusing to seed the real patientfinder database. Use patientfinder_demo or another demo-only database.");
+  }
+
   const rosterRows = parseWorkbookRows(defaultRosterPath);
   const assessmentParagraphs = extractDocxParagraphs(defaultAssessmentPath);
   const assessmentSections = splitAssessments(assessmentParagraphs);

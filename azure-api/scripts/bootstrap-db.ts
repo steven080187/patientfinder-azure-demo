@@ -5,12 +5,19 @@ import { execute, pool } from "../src/db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-const schemaPath = path.join(repoRoot, "sql", "001_bootstrap_schema.sql");
 
 async function main() {
-  const schemaSql = await fs.readFile(schemaPath, "utf8");
-  await execute(schemaSql);
-  console.log(`Applied schema from ${schemaPath}`);
+  const sqlDir = path.join(repoRoot, "sql");
+  const schemaFiles = (await fs.readdir(sqlDir))
+    .filter((file) => file.endsWith(".sql"))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  for (const file of schemaFiles) {
+    const filePath = path.join(sqlDir, file);
+    const schemaSql = await fs.readFile(filePath, "utf8");
+    await execute(schemaSql);
+    console.log(`Applied schema from ${filePath}`);
+  }
 }
 
 main()

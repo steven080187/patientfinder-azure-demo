@@ -640,7 +640,7 @@ groupsRouter.post("/api/groups/live/start", requireAuth, requireAnyRole("Admin",
 
     const token = createGroupJoinToken(sessionId);
     const origin = getPublicGroupOrigin(req);
-    const joinUrl = `${origin}/g/${encodeURIComponent(token)}`;
+    const joinUrl = `${origin}/?group-sign=${encodeURIComponent(token)}`;
     const session = await getSessionById(sessionId);
 
     res.json({

@@ -61,7 +61,7 @@ patientsRouter.get("/api/patients", requireAuth, requireAnyRole("Admin", "Counse
     const assignedToEmail = String(req.query.assigned_to_email ?? "").trim().toLowerCase();
     const offset = Math.max(0, Number.parseInt(String(req.query.offset ?? "0"), 10) || 0);
     const requestedLimit = Number.parseInt(String(req.query.limit ?? "50"), 10) || 50;
-    const limit = Math.min(200, Math.max(1, requestedLimit));
+    const limit = Math.min(1000, Math.max(1, requestedLimit));
 
     const statuses = new Set(["new", "current", "rss_plus", "rss", "former", "active", "past", "inactive"]);
     const statusFilter = statuses.has(statusParam) ? statusParam : null;

@@ -49,7 +49,8 @@ function getApiBaseUrl() {
     (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   const isAllowedOverride = (value: string) =>
     /^https:\/\//i.test(value) ||
-    (isLocalBrowser && (/^http:\/\//i.test(value) || value.startsWith("/")));
+    value.startsWith("/") ||
+    (isLocalBrowser && /^http:\/\//i.test(value));
   const overrideBaseUrl =
     rawOverrideBaseUrl && isAllowedOverride(rawOverrideBaseUrl) ? rawOverrideBaseUrl : null;
   const apiBaseUrl = overrideBaseUrl || configuredBaseUrl;
@@ -66,6 +67,16 @@ function getApiBaseUrl() {
   }
   return normalized;
 }
+
+export type AzureApiHealth = {
+  ok: true;
+  service?: string;
+  phase?: string;
+  dataSource?: string;
+  databaseName?: string | null;
+  databaseRole?: "local-phi" | "demo" | null;
+  hasDatabaseUrl?: boolean;
+};
 
 async function toRequestError(response: Response) {
   let detail = "";
@@ -229,6 +240,10 @@ async function deleteJson(path: string): Promise<void> {
 
 export async function getAzureAuthOptions() {
   return requestJson<{ ok: true; authMode: "demo" | "entra"; demoUsers: AzureDemoUser[] }>("/api/auth/options");
+}
+
+export async function getAzureApiHealth() {
+  return requestJsonPublic<AzureApiHealth>("/health");
 }
 
 export async function loginToAzureDemo(email: string, password: string) {

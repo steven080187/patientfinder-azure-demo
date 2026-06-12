@@ -4,6 +4,7 @@ import { getDataClient } from "./data/client";
 import {
   clearAzureApiDocumentBlobCache,
   getAzureAuthOptions,
+  getAzureApiHealth,
   loginToAzureDemo,
   setAzureApiAccessTokenProvider,
 } from "./data/azureApiDataClient";
@@ -29,7 +30,9 @@ import nameSlayerSeedRules from "./nameSlayerSeedRules.json";
 import { PatientBridgeWorkbookPage } from "./admin/PatientBridgeWorkbookPage";
 import "./App.css";
 
-GlobalWorkerOptions.workerSrc = new URL("./pdf.worker.bootstrap.js", import.meta.url).toString();
+if (typeof window !== "undefined" && !GlobalWorkerOptions.workerPort) {
+  GlobalWorkerOptions.workerPort = new Worker(new URL("./pdf.worker.entry.ts", import.meta.url), { type: "module" });
+}
 
 /* -------------------- Types -------------------- */
 
@@ -353,30 +356,36 @@ async function extractTextFromPdf(file: File) {
   const extracted = cleanedPages.join("\n\n").trim();
   if (extracted && !shouldOcrPdf(pages)) return extracted;
 
-  const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker("eng", 1, {
-    workerPath: "/ocr/worker.min.js",
-    corePath: "/ocr/core",
-    langPath: "/ocr/lang/4.0.0/",
-  });
-  const ocrPages: string[] = [];
   try {
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: 2 });
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
-      if (!context) continue;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      await page.render({ canvasContext: context, canvas, viewport }).promise;
-      const { data } = await worker.recognize(canvas);
-      ocrPages.push(data.text || "");
+    const { createWorker } = await import("tesseract.js");
+    const worker = await createWorker("eng", 1, {
+      workerPath: "/ocr/worker.min.js",
+      corePath: "/ocr/core",
+      langPath: "/ocr/lang/4.0.0/",
+    });
+    const ocrPages: string[] = [];
+    try {
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 2 });
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        if (!context) continue;
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: context, canvas, viewport }).promise;
+        const { data } = await worker.recognize(canvas);
+        ocrPages.push(data.text || "");
+      }
+    } finally {
+      await worker.terminate();
     }
-  } finally {
-    await worker.terminate();
+    const ocrText = cleanPdfPages(ocrPages).join("\n\n").trim();
+    return ocrText || extracted;
+  } catch (error) {
+    console.error("Name Slayer OCR fallback failed:", error);
+    return extracted;
   }
-  return cleanPdfPages(ocrPages).join("\n\n");
 }
 
 type AttendanceEntry = {
@@ -650,6 +659,14 @@ function hashInstallSeed(value: string) {
 
 function getPublicGroupTokenFromPath() {
   if (typeof window === "undefined") return null;
+  const queryToken = window.location.search ? new URLSearchParams(window.location.search).get("group-sign") : null;
+  if (queryToken) {
+    try {
+      return decodeURIComponent(queryToken);
+    } catch {
+      return null;
+    }
+  }
   const match = window.location.pathname.match(/^\/(?:group-sign|g)\/([^/]+)$/);
   if (!match?.[1]) return null;
   try {
@@ -1978,12 +1995,76 @@ const THEME_COLORS: Record<ThemeId, string> = {
   ember:    "#44231a",
 };
 
+type ApiTargetProfile = "local-phi" | "ncadd-azure" | "custom";
+
 const API_OVERRIDE_KEY = "patientfinder.azure-demo.apiBaseUrlOverride.v1";
+const API_PROFILE_KEY = "patientfinder.azure-demo.apiProfile.v1";
+const API_CUSTOM_URL_KEY = "patientfinder.azure-demo.apiCustomBaseUrl.v1";
 const LOCAL_API_BASE_URL = String(import.meta.env.VITE_LOCAL_AZURE_API_BASE_URL ?? "http://localhost:3001").trim();
 const NCADD_API_BASE_URL = String(import.meta.env.VITE_NCADD_AZURE_API_BASE_URL ?? "https://pfsbx-api-0412346.azurewebsites.net").trim();
+
+function isLikelyLocalHost(hostname: string) {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".lan") ||
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(hostname)
+  );
+}
+
 const IS_LOCAL_BROWSER =
   typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+  isLikelyLocalHost(window.location.hostname);
+
+function getApiTargetLabel(profile: ApiTargetProfile) {
+  switch (profile) {
+    case "local-phi":
+      return "Local PHI";
+    case "ncadd-azure":
+      return "NCADD Azure";
+    case "custom":
+      return "Custom API";
+  }
+}
+
+function getApiTargetDescription(profile: ApiTargetProfile) {
+  switch (profile) {
+    case "local-phi":
+      return "Local API pointed at the real local Postgres.";
+    case "ncadd-azure":
+      return "Deployed Azure API and Azure Postgres.";
+    case "custom":
+      return "Any explicit API host you enter.";
+  }
+}
+
+function getConfiguredApiBaseUrl(profile: ApiTargetProfile, customBaseUrl: string) {
+  if (profile === "ncadd-azure") return NCADD_API_BASE_URL;
+  if (profile === "custom") return customBaseUrl.trim() || LOCAL_API_BASE_URL;
+  return LOCAL_API_BASE_URL;
+}
+
+function inferInitialApiProfile(): ApiTargetProfile {
+  if (typeof window === "undefined") {
+    return "local-phi";
+  }
+  const storedProfile = window.localStorage.getItem(API_PROFILE_KEY)?.trim();
+  if (storedProfile === "local-phi" || storedProfile === "ncadd-azure" || storedProfile === "custom") {
+    return storedProfile;
+  }
+  const override = window.localStorage.getItem(API_OVERRIDE_KEY)?.trim();
+  if (override) {
+    if (override === NCADD_API_BASE_URL) return "ncadd-azure";
+    if (override === LOCAL_API_BASE_URL) return "local-phi";
+    return "custom";
+  }
+  return "local-phi";
+}
 
 /* -------------------- App -------------------- */
 
@@ -2070,11 +2151,11 @@ export default function App() {
   const [search, setSearch] = useState("");
   const { raw: qRaw, compact: qCompact } = useMemo(() => normalizeQuery(search), [search]);
   const [patientPage, setPatientPage] = useState(0);
-  const patientPageSize = 50;
+  const patientPageSize = 1000;
   const [patientTotal, setPatientTotal] = useState(0);
 
-  const [forceRoster, setForceRoster] = useState(false);
-  const [caseLoadOnly, setCaseLoadOnly] = useState(true);
+  const [forceRoster, setForceRoster] = useState(true);
+  const [caseLoadOnly, setCaseLoadOnly] = useState(false);
   const debugPatientFlow =
     String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "1" ||
     String(import.meta.env.VITE_DEBUG_PATIENT_FLOW ?? "").toLowerCase() === "true" ||
@@ -2094,25 +2175,14 @@ export default function App() {
         setAuthMode(payload.authMode ?? "demo");
         setAzureDemoUsers(payload.authMode === "demo" ? (payload.demoUsers ?? []) : []);
       } catch (error) {
-        const hasOverride = typeof window !== "undefined" && Boolean(window.localStorage.getItem(API_OVERRIDE_KEY));
-        if (hasOverride && typeof window !== "undefined") {
-          window.localStorage.removeItem(API_OVERRIDE_KEY);
-          try {
-            const payload = await getAzureAuthOptions();
-            if (cancelled) return;
-            setAuthOptionsError("Selected API target was unreachable. Switched to the configured Azure API.");
-            setAuthMode(payload.authMode ?? "demo");
-            setAzureDemoUsers(payload.authMode === "demo" ? (payload.demoUsers ?? []) : []);
-            return;
-          } catch {
-            // Fall through to default error handling.
-          }
-        }
-
         if (!cancelled) {
           setAuthMode("demo");
           setAzureDemoUsers([]);
-          setAuthOptionsError(getRequestErrorMessage(error, "Unable to resolve auth mode from Azure API."));
+          const profile = typeof window === "undefined" ? "local-phi" : (window.localStorage.getItem(API_PROFILE_KEY)?.trim() as ApiTargetProfile | null);
+          const targetLabel = profile && (profile === "local-phi" || profile === "ncadd-azure" || profile === "custom")
+            ? getApiTargetLabel(profile)
+            : "selected API target";
+          setAuthOptionsError(getRequestErrorMessage(error, `Unable to reach the ${targetLabel}. Check the connection profile in the sign-in sheet.`));
         }
       }
     };
@@ -2359,7 +2429,7 @@ export default function App() {
       const pastTier = kindFilter === "Former Recent" ? "recent" : kindFilter === "Former Archived" ? "archived" : undefined;
       const shouldHideUnscopedRoster = !forceRoster && !caseLoadOnly && !qRaw;
       const patientsPagePromise = shouldHideUnscopedRoster
-        ? Promise.resolve({ patients: [], total: 0, limit: patientPageSize, offset: patientPage * patientPageSize })
+        ? Promise.resolve({ patients: [], total: 0, limit: patientPageSize, offset: 0 })
         : dataClient.getPatientsPage({
             q: qRaw || undefined,
             status: patientStatus,
@@ -2369,7 +2439,7 @@ export default function App() {
             sortKey,
             sortDir,
             limit: patientPageSize,
-            offset: patientPage * patientPageSize,
+            offset: 0,
           });
 
       if (debugPatientFlow) {
@@ -2736,9 +2806,7 @@ export default function App() {
     return rows.map((r) => r.p);
   }, [indexed, qRaw, qCompact, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, caseAssignments, counselorId, dashboardFilter, complianceByPatient, currentWeek, sessions]);
 
-  const patientPageStart = patientTotal ? patientPage * patientPageSize + 1 : 0;
-  const patientPageEnd = Math.min(patientTotal, (patientPage + 1) * patientPageSize);
-  const mobileSearchPlaceholder = `Search by patient, sage ID, date, drug test, anything! • ${results.length} visible • ${patientPageStart}-${patientPageEnd} of ${patientTotal}`;
+  const mobileSearchPlaceholder = `Search by patient, sage ID, date, drug test, anything! • ${results.length} visible • ${patientTotal} total`;
   const lockCanvasScroll = workspaceTab === "roster";
 
   const [selectedId, setSelectedId] = useState<string>(patients[0]?.id ?? "");
@@ -2952,6 +3020,10 @@ export default function App() {
         return;
       }
 
+      if (isTreatmentPlanEnded(patient)) {
+        return;
+      }
+
       if (problemListDate && !treatmentPlanDate) {
         const treatmentPlanDueDate = addDaysIso(patient.intakeDate, 30);
         const treatmentPlanDaysUntilDue = dayDiff(now, treatmentPlanDueDate);
@@ -3045,12 +3117,29 @@ export default function App() {
 
   const openGroupPdf = async (groupSessionId: string) => {
     setOpeningGroupId(groupSessionId);
+    const pdfWindow = window.open("", "_blank");
+    if (!pdfWindow) {
+      window.alert("Please allow pop-ups to open this PDF.");
+      setOpeningGroupId(null);
+      return;
+    }
+    try {
+      pdfWindow.opener = null;
+    } catch {
+      // Ignore browsers that disallow mutating opener.
+    }
     try {
       const blob = await dataClient.downloadGroupPdf(groupSessionId);
       const objectUrl = window.URL.createObjectURL(blob);
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
+      pdfWindow.location.href = objectUrl;
+      pdfWindow.focus();
       window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
     } catch (error) {
+      try {
+        pdfWindow.close();
+      } catch {
+        // Ignore best-effort cleanup errors.
+      }
       console.error("Unable to open group PDF:", error);
       window.alert("Could not open that group PDF right now.");
     } finally {
@@ -3918,7 +4007,7 @@ export default function App() {
                   onClick={() => setPrivacyLocked(true)}
                   aria-label="patientfinder logo"
                 >
-                  <img className="workspaceMobileLogo workspaceMobileLogoOnly" src={themeButtonLogo} alt="" />
+                  <img className="workspaceMobileLogo" src={patientFinderLogo} alt="patientfinder logo" />
                 </button>
 
                 {!privacyLocked ? (
@@ -4308,7 +4397,7 @@ export default function App() {
                                 </button>
                               </div>
                               <div className="workspaceResultsCount">
-                                {results.length} visible • {patientPageStart}-{patientPageEnd} of {patientTotal}
+                                {results.length} visible • {patientTotal} total
                               </div>
                               <button
                                 className={desktopGlanceOpen ? "btn ghost workspaceGlanceBtn active" : "btn ghost workspaceGlanceBtn"}
@@ -8523,7 +8612,7 @@ function PatientPage({
               <div className="sectionTitle">SNAP Assessment</div>
               {subLoading ? <div className="hintTiny">Loading…</div> :
                !sub ? <div className="hintTiny">No intake submission found.</div> :
-               <SnapTab rawJson={(sub.raw_json as any)} />}
+               <SnapTab rawJson={(sub.raw_json as any)} onRawJsonUpdate={updateConsentRawJson} />}
             </div>
           ) : null}
 
@@ -9600,28 +9689,71 @@ function MultiEditModal({ title, opts, cur, onSave, onClose }: {
 
 /* -------------------- SNAP Tab -------------------- */
 
-function SnapTab({ rawJson }: { rawJson: any }) {
+function SnapTab({ rawJson, onRawJsonUpdate }: { rawJson: any; onRawJsonUpdate?: (json: any) => Promise<void> }) {
   const snap = rawJson?.sections?.snap ?? {};
-  const groups: Array<{ label: string; key: string; klass: string }> = [
-    { label: "Strengths", key: "strengths", klass: "chip-green" },
-    { label: "Needs", key: "needs", klass: "chip-red" },
-    { label: "Abilities", key: "abilities", klass: "chip-blue" },
-    { label: "Preferences", key: "preferences", klass: "chip-purple" },
+  const [multiModal, setMultiModal] = useState<{
+    title: string;
+    opts: string[];
+    cur: string[];
+    onSave: (vals: string[]) => void | Promise<void>;
+  } | null>(null);
+  const groups: Array<{ label: string; key: "strengths" | "needs" | "abilities" | "preferences"; klass: string; opts: string[] }> = [
+    { label: "Strengths", key: "strengths", klass: "chip-green", opts: SNAP_STRENGTHS_OPTS },
+    { label: "Needs", key: "needs", klass: "chip-red", opts: SNAP_NEEDS_OPTS },
+    { label: "Abilities", key: "abilities", klass: "chip-blue", opts: SNAP_ABILITIES_OPTS },
+    { label: "Preferences", key: "preferences", klass: "chip-purple", opts: SNAP_PREFERENCES_OPTS },
   ];
+  const openMulti = (title: string, opts: string[], key: typeof groups[number]["key"], cur: string[]) => {
+    if (!onRawJsonUpdate) return;
+    setMultiModal({
+      title,
+      opts,
+      cur,
+      onSave: (vals) =>
+        onRawJsonUpdate({
+          ...rawJson,
+          sections: {
+            ...rawJson?.sections,
+            snap: {
+              ...rawJson?.sections?.snap,
+              [key]: vals,
+            },
+          },
+        }),
+    });
+  };
 
   return (
     <div className="snapWrap">
+      <div className="hintTiny" style={{ marginBottom: 10 }}>
+        SNAP can be updated after admission using the edit buttons on each section.
+      </div>
       {groups.map((g) => {
         const arr = (snap?.[g.key] ?? []) as string[];
         return (
           <div className="snapGroup" key={g.key}>
-            <div className="snapTitle">{g.label}</div>
+            <div className="snapTitle" style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+              <span>{g.label}</span>
+              <HeadEdit
+                enabled={Boolean(onRawJsonUpdate)}
+                onClick={() => openMulti(g.label, g.opts, g.key, arr)}
+              />
+            </div>
             <div className="snapChips">
               {arr.length ? arr.map((v, i) => <span key={`${g.key}-${i}`} className={`snapChip ${g.klass}`}>{v}</span>) : <span className="muted">—</span>}
             </div>
           </div>
         );
       })}
+      {multiModal ? (
+        <MultiEditModal
+          title={multiModal.title}
+          opts={multiModal.opts}
+          cur={multiModal.cur}
+          onSave={multiModal.onSave}
+          onClose={() => setMultiModal(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -10250,26 +10382,110 @@ function EntraLoginScreen({
 }
 
 function AuthRosterSourcePicker() {
-  const [source, setSource] = useState<"ncadd" | "demo">(() => {
-    if (typeof window === "undefined") return "demo";
-    if (!IS_LOCAL_BROWSER) return "ncadd";
-    const override = window.localStorage.getItem(API_OVERRIDE_KEY)?.trim();
-    if (!override) return "demo";
-    if (override === NCADD_API_BASE_URL) return "ncadd";
-    return "demo";
-  });
+  const [profile, setProfile] = useState<ApiTargetProfile>(() => inferInitialApiProfile());
   const [open, setOpen] = useState(false);
+  const [customUrlDraft, setCustomUrlDraft] = useState(() => {
+    if (typeof window === "undefined") return LOCAL_API_BASE_URL;
+    const storedCustom = window.localStorage.getItem(API_CUSTOM_URL_KEY)?.trim();
+    if (storedCustom) return storedCustom;
+    const override = window.localStorage.getItem(API_OVERRIDE_KEY)?.trim();
+    if (override && override !== LOCAL_API_BASE_URL && override !== NCADD_API_BASE_URL) {
+      return override;
+    }
+    return LOCAL_API_BASE_URL;
+  });
+  const [customUrlError, setCustomUrlError] = useState<string | null>(null);
+  const [backendHealth, setBackendHealth] = useState<{
+    state: "loading" | "ready" | "error";
+    title: string;
+    detail: string;
+  }>({ state: "loading", title: "Checking backend", detail: "Resolving the active API target." });
   const pickerRef = useRef<HTMLDivElement | null>(null);
+  const customInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
+  const persistTarget = (nextProfile: ApiTargetProfile, nextCustomUrl?: string) => {
     if (typeof window === "undefined") return;
-    if (!IS_LOCAL_BROWSER) {
-      window.localStorage.removeItem(API_OVERRIDE_KEY);
+
+    const nextUrl =
+      nextProfile === "custom"
+        ? (nextCustomUrl ?? customUrlDraft).trim()
+        : getConfiguredApiBaseUrl(nextProfile, customUrlDraft);
+
+    window.localStorage.setItem(API_PROFILE_KEY, nextProfile);
+    window.localStorage.setItem(API_OVERRIDE_KEY, nextUrl);
+    if (nextProfile === "custom") {
+      window.localStorage.setItem(API_CUSTOM_URL_KEY, nextUrl);
+    }
+  };
+
+  const selectPreset = (nextProfile: Exclude<ApiTargetProfile, "custom">) => {
+    setProfile(nextProfile);
+    setCustomUrlError(null);
+    persistTarget(nextProfile);
+    setOpen(false);
+    window.location.reload();
+  };
+
+  const openCustomEditor = () => {
+    setProfile("custom");
+    setCustomUrlError(null);
+    if (typeof window !== "undefined") {
+      const currentCustom =
+        window.localStorage.getItem(API_CUSTOM_URL_KEY)?.trim() ||
+        window.localStorage.getItem(API_OVERRIDE_KEY)?.trim() ||
+        LOCAL_API_BASE_URL;
+      setCustomUrlDraft(currentCustom);
+    }
+    setOpen(true);
+  };
+
+  const saveCustomTarget = () => {
+    const nextUrl = customUrlDraft.trim();
+    if (!/^https?:\/\//i.test(nextUrl) && !(IS_LOCAL_BROWSER && nextUrl.startsWith("/"))) {
+      setCustomUrlError("Enter an http(s) URL or a local path like /api.");
       return;
     }
-    const nextBaseUrl = source === "ncadd" ? NCADD_API_BASE_URL : LOCAL_API_BASE_URL;
-    window.localStorage.setItem(API_OVERRIDE_KEY, nextBaseUrl);
-  }, [source]);
+
+    setProfile("custom");
+    setCustomUrlError(null);
+    persistTarget("custom", nextUrl);
+    setOpen(false);
+    window.location.reload();
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setBackendHealth({ state: "loading", title: "Checking backend", detail: "Resolving the active API target." });
+
+    void getAzureApiHealth()
+      .then((payload) => {
+        if (cancelled) return;
+        const databaseName = payload.databaseName ?? "unknown database";
+        const role =
+          payload.databaseRole === "local-phi"
+            ? "Local PHI"
+            : payload.databaseRole === "demo"
+              ? "Azure demo"
+              : "Configured API";
+        setBackendHealth({
+          state: "ready",
+          title: role,
+          detail: `${payload.service ?? "API"} · ${databaseName}${payload.phase ? ` · ${payload.phase}` : ""}`,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBackendHealth({
+          state: "error",
+          title: "Backend unavailable",
+          detail: "The selected API target did not answer /health.",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile]);
 
   useEffect(() => {
     if (!open) return;
@@ -10282,8 +10498,14 @@ function AuthRosterSourcePicker() {
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [open]);
 
-  const selectedLogo = source === "ncadd" ? ncaddLogo : themeButtonLogo;
-  const selectedAlt = source === "ncadd" ? "NCADD roster logo" : "Demo roster logo";
+  useEffect(() => {
+    if (profile !== "custom" || !open) return;
+    customInputRef.current?.focus();
+    customInputRef.current?.select();
+  }, [open, profile]);
+
+  const selectedLogo = profile === "ncadd-azure" ? ncaddLogo : themeButtonLogo;
+  const selectedAlt = `${getApiTargetLabel(profile)} API target`;
 
   return (
     <div className="authRosterPicker" ref={pickerRef}>
@@ -10297,38 +10519,96 @@ function AuthRosterSourcePicker() {
             aria-expanded={open}
             onClick={() => setOpen((prev) => !prev)}
           >
-            <img className={`authRosterLogo${source === "demo" ? " demo" : ""}`} src={selectedLogo} alt={selectedAlt} />
+            <img className={`authRosterLogo${profile !== "ncadd-azure" ? " demo" : ""}`} src={selectedLogo} alt={selectedAlt} />
             <span className="authRosterChevron" aria-hidden="true">{open ? "▲" : "▼"}</span>
           </button>
           {open ? (
             <div className="authRosterDropdown" role="menu">
-              {IS_LOCAL_BROWSER ? (
-                <button
-                  type="button"
-                  className={source === "demo" ? "authRosterOption active" : "authRosterOption"}
-                  onClick={() => {
-                    setSource("demo");
-                    setOpen(false);
-                  }}
-                >
-                  <img className="authRosterOptionLogo demo" src={themeButtonLogo} alt="" aria-hidden="true" />
-                  <span>Local Dev</span>
-                </button>
-              ) : null}
               <button
                 type="button"
-                className={source === "ncadd" ? "authRosterOption active" : "authRosterOption"}
-                onClick={() => {
-                  setSource("ncadd");
-                  setOpen(false);
-                }}
+                className={profile === "local-phi" ? "authRosterOption active" : "authRosterOption"}
+                onClick={() => selectPreset("local-phi")}
+              >
+                <img className="authRosterOptionLogo demo" src={themeButtonLogo} alt="" aria-hidden="true" />
+                <span>
+                  <span className="authRosterOptionTitle">Local PHI</span>
+                  <span className="authRosterOptionDesc">{getApiTargetDescription("local-phi")}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={profile === "ncadd-azure" ? "authRosterOption active" : "authRosterOption"}
+                onClick={() => selectPreset("ncadd-azure")}
               >
                 <img className="authRosterOptionLogo" src={ncaddLogo} alt="" aria-hidden="true" />
-                <span>NCADD Azure</span>
+                <span>
+                  <span className="authRosterOptionTitle">NCADD Azure</span>
+                  <span className="authRosterOptionDesc">{getApiTargetDescription("ncadd-azure")}</span>
+                </span>
               </button>
+              <button
+                type="button"
+                className={profile === "custom" ? "authRosterOption active" : "authRosterOption"}
+                onClick={openCustomEditor}
+              >
+                <img className="authRosterOptionLogo demo" src={themeButtonLogo} alt="" aria-hidden="true" />
+                <span>
+                  <span className="authRosterOptionTitle">Custom API</span>
+                  <span className="authRosterOptionDesc">{getApiTargetDescription("custom")}</span>
+                </span>
+              </button>
+              {profile === "custom" ? (
+                <div className="authRosterCustom">
+                  <label className="authRosterCustomLabel" htmlFor="authRosterCustomBaseUrl">
+                    API base URL
+                  </label>
+                  <input
+                    id="authRosterCustomBaseUrl"
+                    ref={customInputRef}
+                    className="authRosterCustomInput"
+                    type="text"
+                    spellCheck={false}
+                    value={customUrlDraft}
+                    onChange={(event) => setCustomUrlDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        saveCustomTarget();
+                      }
+                    }}
+                    placeholder="http://localhost:3001"
+                  />
+                  <div className="authRosterCustomActions">
+                    <button type="button" className="btn" onClick={saveCustomTarget}>
+                      Save target
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => {
+                        setProfile("local-phi");
+                        setCustomUrlError(null);
+                        persistTarget("local-phi");
+                        setOpen(false);
+                        window.location.reload();
+                      }}
+                    >
+                      Back to local
+                    </button>
+                  </div>
+                  {customUrlError ? <div className="authRosterCustomError">{customUrlError}</div> : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
+      </div>
+      <div className="authRosterHint">
+        <div className="authRosterHintLine">
+          <span className="authRosterHintLabel">{getApiTargetLabel(profile)}</span>
+          <span className={`authRosterHintBadge ${backendHealth.state}`}>{backendHealth.title}</span>
+        </div>
+        <div className="authRosterHintDetail">{backendHealth.detail}</div>
       </div>
     </div>
   );
@@ -10870,7 +11150,6 @@ function GroupsPage({
       <div className="workspaceRosterHead">
         <div>
           <div className="workspaceSectionLabel">Groups</div>
-          <div className="workspaceRosterTitle">Create a sign-in link, share in Zoom, match participants, and generate one PDF.</div>
         </div>
         <div className="workspaceResultsCount">{sortedGroups.length} session{sortedGroups.length === 1 ? "" : "s"}</div>
       </div>
@@ -11090,7 +11369,6 @@ function BillingPage({
       <div className="workspaceRosterHead">
         <div>
           <div className="workspaceSectionLabel">Billing Sheet</div>
-          <div className="workspaceRosterTitle">Whole roster, current month, in the same day-minute format your team already uses.</div>
         </div>
         <div className="billingToolbar">
           <label className="attendanceField">
@@ -11099,10 +11377,6 @@ function BillingPage({
           </label>
           <div className="workspaceResultsCount">{monthLabel(billingMonth)}</div>
         </div>
-      </div>
-
-      <div className="billingHint">
-        Main service columns show `day-minutes` with the modality codes underneath. Naloxone and MAT ED columns show just the day number.
       </div>
 
       <div className="workspaceSheetWrap">

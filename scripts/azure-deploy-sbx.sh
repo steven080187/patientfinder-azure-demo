@@ -18,6 +18,17 @@ echo "Building frontend and API locally..."
 (cd "$ROOT" && npm run -s build)
 (cd "$ROOT/azure-api" && npm run -s build)
 
+echo "Disabling host-side frontend builds on Azure..."
+az webapp config appsettings set \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$FRONT_APP" \
+  --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false >/dev/null
+
+az webapp config appsettings set \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$API_APP" \
+  --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false >/dev/null
+
 echo "Staging deploy packages..."
 rm -rf "$FRONT_STAGE" "$API_STAGE" "$FRONT_ZIP" "$API_ZIP"
 mkdir -p "$FRONT_STAGE" "$API_STAGE"
@@ -35,6 +46,7 @@ rsync -a "$ROOT"/ "$FRONT_STAGE"/ \
   --exclude azure-api/node_modules \
   --exclude azure-api/dist \
   --exclude azure-api/uploads
+cp -R "$ROOT/node_modules" "$FRONT_STAGE/node_modules"
 
 # API package (azure-api app only)
 rsync -a "$ROOT"/azure-api/ "$API_STAGE"/ \
@@ -52,20 +64,20 @@ rsync -a "$ROOT"/azure-api/ "$API_STAGE"/ \
 ls -lh "$FRONT_ZIP" "$API_ZIP"
 
 echo "Deploying frontend to $FRONT_APP..."
-az webapp deploy \
+az webapp deployment source config-zip \
   --resource-group "$RESOURCE_GROUP" \
   --name "$FRONT_APP" \
-  --src-path "$FRONT_ZIP" \
-  --type zip \
-  --track-status false
+  --src "$FRONT_ZIP"
 
 echo "Deploying API to $API_APP..."
-az webapp deploy \
+az webapp deployment source config-zip \
   --resource-group "$RESOURCE_GROUP" \
   --name "$API_APP" \
-  --src-path "$API_ZIP" \
-  --type zip \
-  --track-status false
+  --src "$API_ZIP"
+
+echo "Restarting Azure apps..."
+az webapp restart --resource-group "$RESOURCE_GROUP" --name "$FRONT_APP" >/dev/null
+az webapp restart --resource-group "$RESOURCE_GROUP" --name "$API_APP" >/dev/null
 
 echo "Done."
 echo "Frontend: https://${FRONT_APP}.azurewebsites.net"
