@@ -9,6 +9,8 @@ import {
   setAzureApiAccessTokenProvider,
 } from "./data/azureApiDataClient";
 import { useAzureAuth } from "./auth/azureAuth";
+import { WorkspaceShell } from "./workspace/WorkspaceShell";
+import { useWorkspaceLayout } from "./workspace/useWorkspaceLayout";
 import type {
   AiNoteType,
   AzureDemoUser,
@@ -98,14 +100,6 @@ type NameSlayerRule = {
 
 const NAME_SLAYER_RULES = nameSlayerSeedRules as NameSlayerRule[];
 
-function MobileMenuIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M4 7h16M4 12h16M4 17h16" />
-    </svg>
-  );
-}
-
 function MobileGlanceIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -145,17 +139,6 @@ function SheetDiamondIcon() {
       <rect x="5" y="5" width="14" height="14" rx="2" />
       <path d="M5 10h14" />
       <path d="M10 5v14" />
-    </svg>
-  );
-}
-
-function MobileSortIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M8 4v14" />
-      <path d="M4.5 15.5 8 19l3.5-3.5" />
-      <path d="M16 20V6" />
-      <path d="M12.5 8.5 16 5l3.5 3.5" />
     </svg>
   );
 }
@@ -511,39 +494,6 @@ type Route =
 
 type AuthedRoute = Route | { name: "attendance" };
 type AuthMode = "demo" | "entra";
-
-const LOCK_SCREEN_JOKES = [
-  "SUD counseling is 20% clinical skill and 80% getting the group back from snack break.",
-  "My treatment plan says one thing. My progress note says, 'Please see attached chaos.'",
-  "I became an SUD counselor for the calm environment and predictable schedules.",
-  "Nothing says outpatient like three breakthroughs and one missing signature.",
-  "My clinical style is motivational interviewing with a light touch of 'please sign here.'",
-  "In recovery work, every small win matters, especially when someone actually shows up on time.",
-  "I can de-escalate a room, but I still lose arguments with the printer.",
-  "SUD counselors know relapse prevention and copier troubleshooting are both ongoing processes.",
-  "The group topic was boundaries. The real topic was who took the good pen.",
-  "I practice active listening and active searching for the attendance sheet.",
-  "My resting face says empathy. My charting face says do not talk to me for six minutes.",
-  "Recovery is one day at a time. Documentation is somehow all due today.",
-  "I use person-centered care and counselor-centered coffee.",
-  "Every no-show is a mystery, but every late arrival has a full backstory.",
-  "SUD counseling: where 'resistance' and 'the Wi-Fi is down' can happen in the same hour.",
-  "I believe in change, growth, and hitting save before the note disappears.",
-  "The most powerful intervention is sometimes asking, 'Did you eat anything today?'",
-  "I am fluent in reflective listening and in saying, 'We can process that after group.'",
-  "My group starts at 9:00 and reality starts around 9:17.",
-  "Counselors do not gossip. We discuss patterns in a confidential tone.",
-  "Every discharge summary contains at least one sentence written with pure hope.",
-  "If therapeutic silence were billable, I would retire early.",
-  "SUD counselors can spot denial, avoidance, and an unsigned ROI from across the room.",
-  "Half my job is holding space. The other half is finding forms.",
-  "My self-care plan includes water, boundaries, and not opening one more chart at 4:59.",
-  "There is no stronger bond than a counselor and the client who finally remembers their password.",
-  "I entered behavioral health to help people. The fax machine took that personally.",
-  "The official animal of outpatient treatment is the emotional support clipboard.",
-  "Some heroes wear capes. Some carry Narcan and extra intake packets.",
-  "Behind every strong SUD counselor is a note that still needs one tiny edit.",
-] as const;
 
 /* -------------------- Formatting / Helpers -------------------- */
 
@@ -2093,14 +2043,15 @@ export default function App() {
   const [highlightedPatientIds, setHighlightedPatientIds] = useState<Record<string, "normal" | "urgent">>({});
   const [counselorThinList, setCounselorThinList] = useState(false);
   const [patientDocumentsTabActive, setPatientDocumentsTabActive] = useState(false);
-  const [privacyLocked, setPrivacyLocked] = useState(true);
-  const mobileDashboardScaleKey = "patientfinder.mobile.dashboardScale.v1";
-  const [mobileDashboardScale, setMobileDashboardScale] = useState(() => {
-    if (typeof window === "undefined") return 1;
-    const raw = window.localStorage.getItem(mobileDashboardScaleKey);
-    const parsed = raw ? Number(raw) : 1;
-    return Number.isFinite(parsed) && parsed >= 0.85 && parsed <= 1.25 ? parsed : 1;
-  });
+  const {
+    isMobileWorkspace,
+    privacyLocked,
+    lockWorkspace,
+    unlockWorkspace: openWorkspace,
+    lockJokeText,
+    mobileDashboardScale,
+    setMobileDashboardScale,
+  } = useWorkspaceLayout();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileGlanceOpen, setMobileGlanceOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
@@ -2111,7 +2062,6 @@ export default function App() {
   const [desktopDropdownOpen, setDesktopDropdownOpen] = useState<"sort" | "status" | null>(null);
   const desktopSortDropdownRef = useRef<HTMLDivElement | null>(null);
   const desktopStatusDropdownRef = useRef<HTMLDivElement | null>(null);
-  const [lockJokeIndex, setLockJokeIndex] = useState(() => Math.floor(Math.random() * LOCK_SCREEN_JOKES.length));
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [billingEntries, setBillingEntries] = useState<BillingEntry[]>([]);
@@ -2121,10 +2071,6 @@ export default function App() {
   const [liveGroupBusy, setLiveGroupBusy] = useState(false);
   const [liveGroupError, setLiveGroupError] = useState<string | null>(null);
   const [liveGroupSuccess, setLiveGroupSuccess] = useState<string | null>(null);
-  const [isMobileWorkspace, setIsMobileWorkspace] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth <= 720 : false
-  );
-
   const [view, setView] = useState<ViewMode>("sheet");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -2226,33 +2172,11 @@ export default function App() {
 
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const syncViewport = () => setIsMobileWorkspace(window.innerWidth <= 720);
-    syncViewport();
-    window.addEventListener("resize", syncViewport);
-    return () => window.removeEventListener("resize", syncViewport);
-  }, []);
-
-  useEffect(() => {
     if (view === "split") {
       setView("sheet");
       return;
     }
   }, [isMobileWorkspace, view]);
-
-  useEffect(() => {
-    if (!privacyLocked) return;
-    setLockJokeIndex(Math.floor(Math.random() * LOCK_SCREEN_JOKES.length));
-    const interval = window.setInterval(() => {
-      setLockJokeIndex((current) => (current + 1) % LOCK_SCREEN_JOKES.length);
-    }, 15000);
-    return () => window.clearInterval(interval);
-  }, [privacyLocked]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(mobileDashboardScaleKey, String(mobileDashboardScale));
-  }, [mobileDashboardScale]);
 
   useEffect(() => {
     if (!isMobileWorkspace || privacyLocked) {
@@ -2796,7 +2720,6 @@ export default function App() {
     return rows.map((r) => r.p);
   }, [indexed, qRaw, qCompact, kindFilter, sortKey, sortDir, forceRoster, caseLoadOnly, caseAssignments, counselorId, dashboardFilter, complianceByPatient, currentWeek, sessions]);
 
-  const mobileSearchPlaceholder = `Search by patient, sage ID, date, drug test, anything! • ${results.length} visible • ${patientTotal} total`;
   const lockCanvasScroll = workspaceTab === "roster";
 
   const [selectedId, setSelectedId] = useState<string | null>(patients[0]?.id ?? null);
@@ -3274,14 +3197,14 @@ export default function App() {
     setSearch("");
     setForceRoster(false);
     setCaseLoadOnly(true);
-    setPrivacyLocked(true);
+    lockWorkspace();
   };
 
-  const unlockWorkspace = () => {
+  const unlockWorkspaceAndReset = () => {
     setMobileMenuOpen(false);
     setMobileGlanceOpen(false);
     setMobileSearchOpen(false);
-    setPrivacyLocked(false);
+    openWorkspace();
   };
 
   useEffect(() => {
@@ -3858,232 +3781,44 @@ export default function App() {
   /* ---------- HOME (PHI-safe) ---------- */
   if (route.name === "home") {
     return (
-      <div className={lockCanvasScroll ? "page workspacePage" : "page workspacePage canvasScrollEnabled"}>
-        <div className={!isMobileWorkspace && privacyLocked ? "workspaceShell locked" : "workspaceShell"}>
-          {!isMobileWorkspace && !privacyLocked ? (
-            <aside className="workspaceSidebar">
-              <button className="workspaceBrand compact unlocked" onClick={() => setPrivacyLocked(true)}>
-                <img className="workspaceLogo compact unlocked" src={patientFinderLogo} alt="patientfinder logo" />
-              </button>
-
-              <button
-                className={
-                  desktopMenuOpen
-                    ? "workspaceActionBtn primary workspaceSidebarMenuToggle"
-                    : hasUnreadHighlights
-                      ? "workspaceActionBtn workspaceSidebarMenuToggle hasNotification"
-                      : "workspaceActionBtn workspaceSidebarMenuToggle"
-                }
-                onClick={() => setDesktopMenuOpen((open) => !open)}
-              >
-                {desktopMenuOpen ? "Close menu" : "Menu"}
-                {hasUnreadHighlights ? <span className="menuNotificationDot" aria-hidden="true" /> : null}
-              </button>
-
-              {desktopMenuOpen ? (
-                <>
-                  <div className="workspaceSidebarSection">
-                    <button
-                      className={hasUnreadHighlights ? "workspaceActionBtn workspaceActionBtnGlow" : "workspaceActionBtn"}
-                      onClick={() => setShowNotificationComposer(true)}
-                    >
-                      Highlights
-                    </button>
-                    <button
-                      className={!forceRoster && caseLoadOnly ? "workspaceActionBtn primary" : "workspaceActionBtn"}
-                      onClick={() => {
-                        setWorkspaceTab("roster");
-                        setKindFilter("all");
-                        setCaseLoadOnly(true);
-                        setForceRoster(false);
-                        setSearch("");
-                      }}
-                    >
-                      {counselorLabel} case load
-                    </button>
-                    {canManageRosterScope ? (
-                      <button
-                        className={forceRoster ? "workspaceActionBtn primary" : "workspaceActionBtn"}
-                        onClick={() => {
-                          setWorkspaceTab("roster");
-                          setKindFilter("all");
-                          setForceRoster(true);
-                          setCaseLoadOnly(false);
-                          setSearch("");
-                        }}
-                      >
-                        Full roster
-                      </button>
-                    ) : null}
-                    <button
-                      className={kindFilter === "Former Patient" ? "workspaceActionBtn primary" : "workspaceActionBtn"}
-                      onClick={showPastPatients}
-                    >
-                      Past patients
-                    </button>
-                    <button className="workspaceActionBtn" onClick={() => setRoute({ name: "attendance" })}>
-                      Visits & tests
-                    </button>
-                    <button className="workspaceActionBtn" onClick={() => setRoute({ name: "billing" })}>
-                      Billing
-                    </button>
-                    <button className="workspaceActionBtn" onClick={() => setRoute({ name: "groups" })}>
-                      Groups
-                    </button>
-                    <button className="workspaceActionBtn" onClick={() => setRoute({ name: "mobile" })}>
-                      Mobile
-                    </button>
-                    {hasAdminRole ? (
-                      <button className="workspaceActionBtn" onClick={() => setRoute({ name: "patientbridge" })}>
-                        patientbridge
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <div className="workspaceSidebarSection">
-                    {canManagePatients ? (
-                      <button className="workspaceActionBtn" onClick={() => setShowAddPatient(true)}>
-                        Add patient
-                      </button>
-                    ) : null}
-                    <button className="workspaceActionBtn" onClick={logout}>
-                      Logout
-                    </button>
-                  </div>
-                </>
-              ) : null}
-            </aside>
-          ) : null}
-
-          <main className={!isMobileWorkspace && privacyLocked ? "workspaceMain desktopLocked" : "workspaceMain"}>
-            {isMobileWorkspace ? (
-              <section className="workspaceMobileHero">
-                {!privacyLocked ? (
-                  <button
-                    className={mobileGlanceOpen ? "btn ghost active workspaceMobileHeroGlanceToggle" : "btn ghost workspaceMobileHeroGlanceToggle"}
-                    onClick={() => {
-                      setMobileGlanceOpen((open) => !open);
-                      setMobileMenuOpen(false);
-                      setMobileSearchOpen(false);
-                    }}
-                    title="At a glance"
-                    aria-label="At a glance"
-                  >
-                    <span aria-hidden="true">
-                      <MobileGlanceIcon />
-                    </span>
-                  </button>
-                ) : null}
-
-                <div className="workspaceMobileBrand">
-                  <button
-                    className="workspaceMobileBrandLink"
-                    onClick={() => setPrivacyLocked(true)}
-                    aria-label="patientfinder logo"
-                  >
-                    <img className="workspaceMobileLogo" src={patientFinderLogo} alt="patientfinder logo" />
-                  </button>
-                </div>
-
-                {!privacyLocked ? (
-                  <div className="workspaceMobileHeroSearchRow">
-                    <input
-                      ref={desktopSearchInputRef}
-                      className="workspaceSearch workspaceMobileSearchInput"
-                      value={search}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setSearch(v);
-                        if (v.trim().length) {
-                          setForceRoster(false);
-                          setCaseLoadOnly(false);
-                        }
-                      }}
-                      placeholder={mobileSearchPlaceholder}
-                    />
-                    <button
-                      className={desktopDropdownOpen === "sort" ? "btn ghost active workspaceMobileHeroIconBtn" : "btn ghost workspaceMobileHeroIconBtn"}
-                      onClick={() => {
-                        setMobileMenuOpen(false);
-                        setDesktopDropdownOpen((current) => (current === "sort" ? null : "sort"));
-                      }}
-                      title={`Sort by: ${sortKey}`}
-                      aria-label={`Sort by: ${sortKey}`}
-                    >
-                      <span aria-hidden="true">
-                        <MobileSortIcon />
-                      </span>
-                    </button>
-                    <div className="dropdownAnchor workspaceMobileHeroSortAnchor" ref={desktopSortDropdownRef}>
-                      <button
-                        className="btn ghost workspaceMobileHeroIconBtn"
-                        onClick={() => {
-                          setMobileMenuOpen((open) => !open);
-                          setMobileGlanceOpen(false);
-                          setMobileSearchOpen(false);
-                          setDesktopDropdownOpen(null);
-                        }}
-                        title="Menu"
-                        aria-label="Menu"
-                      >
-                        <span aria-hidden="true">
-                          <MobileMenuIcon />
-                        </span>
-                      </button>
-                      {desktopDropdownOpen === "sort" ? (
-                        <div className="diamondMenu workspaceMobileSortMenu">
-                          <button className="diamondMenuItem" onClick={() => { setSortDir((d) => (d === "asc" ? "desc" : "asc")); setDesktopDropdownOpen(null); }}>
-                            Direction: {sortDir === "asc" ? "Ascending" : "Descending"}
-                          </button>
-                          <button className={sortKey === "name" ? "diamondMenuItem on" : "diamondMenuItem"} onClick={() => { setSortKey("name"); setDesktopDropdownOpen(null); }}>Sort by name</button>
-                          <button className={sortKey === "intake" ? "diamondMenuItem on" : "diamondMenuItem"} onClick={() => { setSortKey("intake"); setDesktopDropdownOpen(null); }}>Sort by intake date</button>
-                          <button className={sortKey === "lastVisit" ? "diamondMenuItem on" : "diamondMenuItem"} onClick={() => { setSortKey("lastVisit"); setDesktopDropdownOpen(null); }}>Sort by last visit</button>
-                          <button className={sortKey === "kind" ? "diamondMenuItem on" : "diamondMenuItem"} onClick={() => { setSortKey("kind"); setDesktopDropdownOpen(null); }}>Sort by status</button>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-
-              </section>
-            ) : null}
-            {privacyLocked ? (
-              isMobileWorkspace ? (
-                <div className="workspacePrivacyStage">
-                  <div className="workspacePrivacyCard">
-                    <button className="btn" onClick={unlockWorkspace}>
-                      Unlock workspace
-                    </button>
-                  </div>
-                  <div className="workspaceLockJokeStage">
-                    <div className="workspaceLockJokeCard">
-                      <div className="workspaceLockJokeGlow" aria-hidden="true" />
-                      <div key={lockJokeIndex} className="workspaceLockJokeText">
-                        {LOCK_SCREEN_JOKES[lockJokeIndex]}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="workspaceDesktopLockStage">
-                  <button className="workspaceBrand hero locked" onClick={unlockWorkspace}>
-                    <img className="workspaceLogo hero locked" src={patientFinderLogo} alt="patientfinder logo" />
-                  </button>
-                  <button className="workspaceUnlockBtn" onClick={unlockWorkspace}>
-                    Unlock
-                  </button>
-                  <div className="workspaceLockJokeStage desktop">
-                    <div className="workspaceLockJokeCard desktop">
-                      <div className="workspaceLockJokeGlow" aria-hidden="true" />
-                      <div key={lockJokeIndex} className="workspaceLockJokeText">
-                        {LOCK_SCREEN_JOKES[lockJokeIndex]}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )
-            ) : (
-              <>
+      <div
+        className={
+          lockCanvasScroll
+            ? isMobileWorkspace && privacyLocked
+              ? "page workspacePage mobileLocked"
+              : "page workspacePage"
+            : "page workspacePage canvasScrollEnabled"
+        }
+      >
+        <WorkspaceShell
+          isMobileWorkspace={isMobileWorkspace}
+          privacyLocked={privacyLocked}
+          lockJokeText={lockJokeText}
+          lockWorkspace={lockWorkspace}
+          unlockWorkspace={unlockWorkspaceAndReset}
+          desktopMenuOpen={desktopMenuOpen}
+          setDesktopMenuOpen={setDesktopMenuOpen}
+          hasUnreadHighlights={hasUnreadHighlights}
+          setShowNotificationComposer={setShowNotificationComposer}
+          setShowAddPatient={setShowAddPatient}
+          counselorLabel={counselorLabel}
+          canManageRosterScope={canManageRosterScope}
+          canManagePatients={canManagePatients}
+          hasAdminRole={hasAdminRole}
+          forceRoster={forceRoster}
+          caseLoadOnly={caseLoadOnly}
+          kindFilter={kindFilter}
+          setWorkspaceTab={setWorkspaceTab}
+          setKindFilter={setKindFilter}
+          setCaseLoadOnly={setCaseLoadOnly}
+          setForceRoster={setForceRoster}
+          setSearch={setSearch}
+          showPastPatients={showPastPatients}
+          logout={logout}
+          setRoute={setRoute}
+          setMobileDashboardScale={setMobileDashboardScale}
+        >
+          <>
                 {isMobileWorkspace && mobileMenuOpen ? (
                   <section className="workspaceMobileMenuCard">
                     <div className="workspaceMobileMenuGrid">
@@ -4309,7 +4044,14 @@ export default function App() {
                         ? `workspaceBoard viewportLocked${view === "split" ? " splitMode" : ""}`
                         : "workspaceBoard"
                     }
-                    style={isMobileWorkspace ? ({ ["--mobile-dashboard-scale" as any]: mobileDashboardScale } as any) : undefined}
+                    style={
+                      {
+                        ["--mobile-dashboard-scale" as any]: mobileDashboardScale,
+                        transform: `scale(${mobileDashboardScale})`,
+                        transformOrigin: "top left",
+                        width: `calc(100% / ${mobileDashboardScale})`,
+                      } as any
+                    }
                   >
                     {(isMobileWorkspace ? mobileSearchOpen : true) ? (
                       <div className="workspaceFilters">
@@ -4561,9 +4303,6 @@ export default function App() {
                   </section>
                 )}
               </>
-            )}
-          </main>
-        </div>
 
         {showAddPatient && canManagePatients && (
           <AddPatientModal
@@ -4665,6 +4404,7 @@ export default function App() {
             }}
           />
         ) : null}
+        </WorkspaceShell>
         <ThemePicker theme={theme} setTheme={applyTheme} />
       </div>
     );
@@ -4883,7 +4623,7 @@ export default function App() {
       p ? complianceByPatient[normalizePatientId(p.id)] ?? complianceByPatient[p.id] : undefined;
 
     return (
-      <div className="page">
+      <div className="page patientRoutePage">
         <div className="topRow patientRouteTopRow">
           <button className="btn" onClick={goHome}>
             ←

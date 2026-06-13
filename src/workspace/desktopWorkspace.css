@@ -1,0 +1,329 @@
+.workspaceShell {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.workspaceShell.locked {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspaceSidebar,
+.workspaceAgendaCard,
+.workspaceRosterCard,
+.workspacePreviewCard {
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+}
+
+.workspaceSidebar {
+  position: sticky;
+  top: 0;
+  margin-top: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(64, 78, 98, 0.78) rgba(14, 20, 30, 0.28);
+}
+
+.workspaceSidebar::-webkit-scrollbar {
+  width: 11px;
+}
+
+.workspaceSidebar::-webkit-scrollbar-track {
+  background: rgba(14, 20, 30, 0.28);
+  border-radius: 999px;
+}
+
+.workspaceSidebar::-webkit-scrollbar-thumb {
+  background: rgba(64, 78, 98, 0.78);
+  border-radius: 999px;
+  border: 2px solid rgba(14, 20, 30, 0.28);
+}
+
+.workspaceSidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(82, 98, 122, 0.88);
+}
+
+.workspaceBrand {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  padding: 12px 14px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(71, 122, 255, 0.22), rgba(77, 195, 179, 0.18)),
+    rgba(10, 16, 24, 0.42);
+  color: inherit;
+  text-align: left;
+  box-shadow: var(--shadow-card);
+}
+
+.workspaceBrand.compact {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspaceBrand.compact.unlocked {
+  border-color: transparent;
+  background: transparent;
+}
+
+.workspaceBrand.hero {
+  width: min(100%, 460px);
+  margin: 0 auto;
+  padding: 28px 30px 24px;
+  border-radius: 36px;
+  transition: transform 220ms ease, box-shadow 220ms ease, background 220ms ease;
+}
+
+.workspaceBrand.hero.locked {
+  border-color: var(--lock-brand-border);
+  background: var(--lock-brand-bg);
+  animation: workspaceDesktopBrandFloat 7s ease-in-out infinite;
+}
+
+.workspaceLogo {
+  display: block;
+  width: min(100%, 240px);
+  height: auto;
+  filter:
+    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.35))
+    drop-shadow(0 10px 24px rgba(0, 0, 0, 0.28));
+}
+
+.workspaceLogo.compact {
+  width: min(100%, 214px);
+  margin: 0;
+}
+
+.workspaceLogo.compact.unlocked {
+  filter:
+    hue-rotate(18deg)
+    saturate(1.08)
+    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.35))
+    drop-shadow(0 10px 24px rgba(52, 133, 110, 0.24));
+}
+
+.workspaceLogo.hero {
+  width: min(100%, 320px);
+  margin: 0 auto;
+}
+
+.workspaceLogo.hero.locked {
+  filter:
+    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.35))
+    drop-shadow(0 18px 36px rgba(0, 0, 0, 0.24));
+}
+
+.workspaceActionBtn {
+  width: 100%;
+  min-height: 36px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: inherit;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+  line-height: 1.15;
+}
+
+.workspaceActionBtnGlow {
+  box-shadow:
+    0 0 0 1px rgba(255, 230, 124, 0.35) inset,
+    0 0 18px rgba(255, 230, 124, 0.28);
+  border-color: rgba(255, 230, 124, 0.65);
+}
+
+.workspaceActionBtn.hasNotification,
+.workspaceMobileMenuBtn.hasNotification {
+  position: relative;
+}
+
+.menuNotificationDot {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #ff3b30;
+  box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.95), 0 0 12px rgba(255, 59, 48, 0.85);
+  animation: menuNotificationPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes menuNotificationPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.82); opacity: 0.75; }
+}
+
+.workspaceSidebarMenuToggle {
+  text-align: center;
+  font-size: 13px;
+}
+
+.workspaceActionBtn.primary {
+  background: linear-gradient(135deg, rgba(71, 122, 255, 0.2), rgba(77, 195, 179, 0.18));
+  border-color: var(--border-strong);
+}
+
+.workspaceActionBtn.disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.workspaceMain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.workspaceMain.desktopLocked {
+  min-height: calc(100vh - 70px);
+}
+
+.workspaceDesktopLockStage {
+  min-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 16px 0 32px;
+}
+
+.workspaceUnlockBtn {
+  min-width: 164px;
+  min-height: 46px;
+  border-radius: 999px;
+  border: 1px solid var(--lock-brand-border);
+  background: color-mix(in srgb, var(--bg-card) 82%, white 6%);
+  color: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 0 20px;
+}
+
+.workspaceLockJokeStage {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 20px 0 28px;
+}
+
+.workspaceLockJokeStage.desktop {
+  width: 100%;
+  padding-top: 4px;
+}
+
+.workspaceLockJokeCard {
+  width: min(860px, calc(100% - 48px));
+  min-height: 160px;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 10px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: visible;
+  position: relative;
+}
+
+.workspaceLockJokeCard.desktop {
+  width: min(640px, calc(100% - 40px));
+  min-height: 110px;
+  padding: 0 18px;
+}
+
+.workspaceLockJokeCard.desktop .workspaceLockJokeText {
+  max-width: 28ch;
+  font-size: clamp(15px, 1.2vw, 20px);
+}
+
+.workspaceLockJokeGlow {
+  position: absolute;
+  inset: auto;
+  width: 520px;
+  height: 520px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, rgba(255, 167, 111, 0.26) 0%, rgba(255, 132, 82, 0.14) 38%, rgba(255, 132, 82, 0.04) 68%, transparent 78%);
+  filter: blur(14px);
+  animation: workspaceJokeGlow 14s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.workspaceLockJokeText {
+  position: relative;
+  z-index: 1;
+  max-width: 32ch;
+  font-size: clamp(18px, 2vw, 28px);
+  line-height: 1.35;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--lock-joke-color);
+  text-wrap: balance;
+  animation: workspaceJokeFade 420ms ease;
+}
+
+@keyframes workspaceJokeFade {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes workspaceJokeGlow {
+  from {
+    transform: translate(-120px, -24px) scale(0.92);
+    opacity: 0.72;
+  }
+  to {
+    transform: translate(150px, 18px) scale(1.08);
+    opacity: 1;
+  }
+}
+
+@keyframes workspaceDesktopBrandFloat {
+  0%, 100% {
+    transform: translateY(0);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.20);
+  }
+  50% {
+    transform: translateY(-6px);
+    box-shadow: 0 28px 64px rgba(0, 0, 0, 0.24);
+  }
+}

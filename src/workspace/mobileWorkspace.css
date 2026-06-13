@@ -1,0 +1,178 @@
+.workspaceMobileHero {
+  display: none;
+}
+
+.workspaceMobileHero {
+  position: relative;
+}
+
+.workspaceMobileLogo {
+  display: block;
+  width: min(100%, 250px);
+  height: auto;
+  margin: 0 auto;
+  filter:
+    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.35))
+    drop-shadow(0 12px 28px rgba(0, 0, 0, 0.24));
+  transition: filter 220ms ease;
+  cursor: pointer;
+}
+
+.workspaceMobileLogoOnly {
+  margin-top: 4px;
+}
+
+.workspaceMobileBrandLink {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.workspaceMobileHeroMenuToggle {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 3;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 14px;
+  font-size: 22px;
+  line-height: 1;
+  justify-content: center;
+  box-shadow: var(--shadow-card);
+}
+
+.workspaceMobileHeroGlanceToggle {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 3;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 14px;
+  font-size: 22px;
+  line-height: 1;
+  justify-content: center;
+  box-shadow: var(--shadow-card);
+}
+
+.workspaceMobileHeroGlanceToggle span {
+  margin-right: 0;
+}
+
+.workspaceMobileHeroMenuToggle span {
+  margin-right: 0;
+}
+
+.workspaceMobileHeroMenuToggle svg,
+.workspaceMobileHeroGlanceToggle svg,
+.workspaceMobileHeroIconBtn svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.workspaceMobileStatusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workspaceMobileTopTitle {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.workspaceMobileTopSub {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-dim);
+}
+
+.workspaceMobileHeroSearch {
+  margin-top: 0;
+}
+
+.workspaceMobileHeroSearchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.workspaceMobileSearchInput {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.workspaceMobileHeroIconBtn {
+  flex: 0 0 42px;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 14px;
+  justify-content: center;
+}
+
+.workspaceMobileHeroIconBtn span {
+  margin-right: 0;
+}
+
+.workspaceMobileHeroIconBtn span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workspaceMobileSortAnchor {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.workspaceMobileSortMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 10;
+  min-width: 214px;
+}
+
+.workspacePrivacyStage {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-height: calc(100vh - 180px);
+}
+
+.workspacePrivacyCard {
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
