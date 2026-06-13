@@ -28,11 +28,12 @@ import type { ConsentForm } from './consentForms';
 import patientFinderLogo from "./assets/patientfinder-logo.svg";
 import ncaddLogo from "./assets/ncadd-logo.png";
 import themeButtonLogo from "./assets/theme-button-logo-white.svg";
+import nameSlayerLogo from "./assets/name-slayer.png";
 import nameSlayerSeedRules from "./nameSlayerSeedRules.json";
 import { PatientBridgeWorkbookPage } from "./admin/PatientBridgeWorkbookPage";
 import "./App.css";
 
-const NAME_SLAYER_SPLASH_LOGO = "/name-slayer-mobile.jpg";
+const NAME_SLAYER_SPLASH_LOGO = nameSlayerLogo;
 
 if (typeof window !== "undefined" && !GlobalWorkerOptions.workerPort) {
   GlobalWorkerOptions.workerPort = new Worker(new URL("./pdf.worker.entry.ts", import.meta.url), { type: "module" });
